@@ -61,7 +61,6 @@ static int s_box_w;
 static int s_screen_h;
 static int16_t s_edit_freeze_h;
 static GPath *s_back_arrow;
-static GPoint s_back_arrow_points[3];
 static GFont s_font_big;
 
 static char s_clock_text[16];
@@ -108,8 +107,10 @@ static int32_t now_seconds(void) {
 }
 
 static int32_t next_vibe_after(int32_t t) {
-  int32_t interval = s_state.interval_seconds > 0 ? s_state.interval_seconds : INTERVAL_GRID_SECONDS;
-  return t + interval;
+  int32_t g = INTERVAL_GRID_SECONDS;
+  int32_t interval = s_state.interval_seconds > 0 ? s_state.interval_seconds : g;
+  int32_t down = (t / g) * g;
+  return down + interval;
 }
 
 static int32_t total_elapsed(void) {
@@ -198,11 +199,11 @@ static void state_save(void) {
 
 static void state_load_or_default(void) {
   if (!persist_exists(PERSIST_INITIALIZED)) {
-    s_state.running = false;
+    s_state.running = true;
     s_state.elapsed_accum = 0;
-    s_state.run_started_epoch = 0;
+    s_state.run_started_epoch = now_seconds();
     s_state.interval_seconds = DEFAULT_INTERVAL_SECONDS;
-    s_state.next_vibe_epoch = 0;
+    s_state.next_vibe_epoch = next_vibe_after(now_seconds());
     s_state.vibe_count = 0;
     s_frozen_cycle_elapsed = 0;
     state_save();
@@ -307,7 +308,7 @@ static void fill_update_proc(Layer *layer, GContext *ctx) {
   GRect fill = GRect(0, bounds.size.h - fill_h, bounds.size.w, fill_h);
   graphics_fill_rect(ctx, fill, 0, GCornerNone);
 
-  if (s_mode == MODE_EDIT && s_back_arrow) {
+  if (s_back_arrow) {
     graphics_context_set_fill_color(ctx, GColorBlack);
     gpath_draw_filled(ctx, s_back_arrow);
   }
@@ -353,10 +354,10 @@ static void update_button_labels(void) {
              s_edit_field == FIELD_MIN ? "SET" : "APPLY");
     snprintf(s_btn_down_text, sizeof(s_btn_down_text), "DOWN");
   } else {
-    snprintf(s_btn_up_text, sizeof(s_btn_up_text), "SET");
-    snprintf(s_btn_center_text, sizeof(s_btn_center_text),
-             s_state.running ? "PAUSE" : (total_elapsed() > 0 ? "RESUME" : "START"));
-    snprintf(s_btn_down_text, sizeof(s_btn_down_text), "RESET");
+    snprintf(s_btn_up_text, sizeof(s_btn_up_text), s_state.running ? "PAUSE" : "RESUME");
+    snprintf(s_btn_center_text, sizeof(s_btn_center_text), "SET");
+    snprintf(s_btn_down_text, sizeof(s_btn_down_text),
+             (s_state.running || total_elapsed() > 0) ? "RESET" : "START");
   }
 
   if (s_btn_up_layer) {
@@ -499,6 +500,7 @@ static void pause_timer(void) {
   s_state.run_started_epoch = 0;
   state_save();
   cancel_pending_wakeup();
+  cancel_ui_tick();
   update_app_glance_safe();
   update_ui();
 }
@@ -512,6 +514,7 @@ static void reset_timer(void) {
   s_frozen_cycle_elapsed = 0;
   state_save();
   cancel_pending_wakeup();
+  cancel_ui_tick();
   update_app_glance_safe();
   update_ui();
 }
@@ -581,7 +584,12 @@ static void up_click_handler(ClickRecognizerRef recognizer, void *context) {
     update_edit_display();
     reset_edit_timeout();
   } else {
-    enter_edit_mode();
+    if (s_state.running) {
+      pause_timer();
+    } else {
+      start_timer();
+    }
+    update_button_labels();
   }
 }
 
@@ -595,7 +603,11 @@ static void down_click_handler(ClickRecognizerRef recognizer, void *context) {
     update_edit_display();
     reset_edit_timeout();
   } else {
-    reset_timer();
+    if (s_state.running || total_elapsed() > 0) {
+      reset_timer();
+    } else {
+      start_timer();
+    }
     update_button_labels();
   }
 }
@@ -611,20 +623,7 @@ static void center_click_handler(ClickRecognizerRef recognizer, void *context) {
       commit_edit_and_run();
     }
   } else {
-    if (s_state.running) {
-      pause_timer();
-    } else {
-      start_timer();
-    }
-    update_button_labels();
-  }
-}
-
-static void back_click_handler(ClickRecognizerRef recognizer, void *context) {
-  if (s_mode == MODE_EDIT) {
-    commit_edit_and_run();
-  } else {
-    window_stack_pop(true);
+    enter_edit_mode();
   }
 }
 
@@ -632,7 +631,6 @@ static void click_config_provider(void *context) {
   window_single_click_subscribe(BUTTON_ID_UP, up_click_handler);
   window_single_click_subscribe(BUTTON_ID_SELECT, center_click_handler);
   window_single_click_subscribe(BUTTON_ID_DOWN, down_click_handler);
-  window_single_click_subscribe(BUTTON_ID_BACK, back_click_handler);
 }
 
 static TextLayer *make_label(Layer *parent, GRect frame, GTextAlignment align, const char *font_key, GColor color) {
@@ -650,10 +648,8 @@ static void main_window_load(Window *window) {
   GRect bounds = layer_get_bounds(window_layer);
   compute_layout(bounds);
 
-  s_back_arrow_points[0] = GPoint(3, s_center_y);
-  s_back_arrow_points[1] = GPoint(13, s_center_y - 7);
-  s_back_arrow_points[2] = GPoint(13, s_center_y + 7);
-  GPathInfo arrow_info = { .num_points = 3, .points = s_back_arrow_points };
+  GPoint arrow_pts[3] = { GPoint(3, s_center_y), GPoint(13, s_center_y - 7), GPoint(13, s_center_y + 7) };
+  GPathInfo arrow_info = { .num_points = 3, .points = arrow_pts };
   s_back_arrow = gpath_create(&arrow_info);
 
   s_font_big = fonts_get_system_font(FONT_KEY_LECO_42_NUMBERS);
@@ -751,14 +747,26 @@ static void init(void) {
     update_app_glance_safe();
   } else {
     cancel_pending_wakeup();
-    if (s_state.running && s_state.next_vibe_epoch <= 0) {
-      s_state.next_vibe_epoch = next_vibe_after(now_seconds());
-      state_save();
-    }
+    bool resume_paused = persist_exists(PERSIST_INITIALIZED) &&
+                         !s_state.running && s_state.elapsed_accum > 0;
     s_edit_field = FIELD_MIN;
-    s_mode = MODE_RUN;
-    push_main_window();
-    update_app_glance_safe();
+    if (resume_paused) {
+      s_mode = MODE_RUN;
+      push_main_window();
+      schedule_ui_tick();
+      update_app_glance_safe();
+    } else {
+      s_state.running = true;
+      if (s_state.next_vibe_epoch <= now_seconds()) {
+        s_state.next_vibe_epoch = next_vibe_after(now_seconds());
+      }
+      s_frozen_cycle_elapsed = 0;
+      state_save();
+      s_mode = MODE_EDIT;
+      push_main_window();
+      enter_edit_mode();
+      update_app_glance_safe();
+    }
   }
 }
 
