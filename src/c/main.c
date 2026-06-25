@@ -264,17 +264,27 @@ static GColor color_sub(void) {
 }
 
 static void compute_ring_geometry(GRect bounds) {
-  int16_t short_side = bounds.size.w < bounds.size.h ? bounds.size.w : bounds.size.h;
-  s_ring_r = short_side / 2 - 34;
-  if (s_ring_r < 30) {
-    s_ring_r = 30;
+  int16_t w = bounds.size.w;
+  int16_t h = bounds.size.h;
+  int16_t top_reserve = 46;
+  int16_t bottom_reserve = 60;
+  int16_t mid_top = top_reserve;
+  int16_t mid_bottom = h - bottom_reserve;
+  if (mid_bottom < mid_top + 40) {
+    mid_bottom = mid_top + 40;
+  }
+  s_ring_cx = w / 2;
+  s_ring_cy = (mid_top + mid_bottom) / 2;
+  int16_t max_r_h = (mid_bottom - mid_top) / 2 - 4;
+  int16_t max_r_w = w / 2 - 8;
+  s_ring_r = max_r_h < max_r_w ? max_r_h : max_r_w;
+  if (s_ring_r < 26) {
+    s_ring_r = 26;
   }
   s_ring_thick = s_ring_r * 18 / 100;
   if (s_ring_thick < 6) {
     s_ring_thick = 6;
   }
-  s_ring_cx = bounds.size.w / 2;
-  s_ring_cy = bounds.size.h / 2;
 }
 
 static void canvas_update_proc(Layer *layer, GContext *ctx) {
@@ -844,14 +854,14 @@ static void main_window_load(Window *window) {
   text_layer_set_font(s_hero_layer, fonts_get_system_font(FONT_KEY_LECO_32_BOLD_NUMBERS));
   layer_add_child(window_layer, text_layer_get_layer(s_hero_layer));
 
-  s_next_layer = text_layer_create(GRect(0, s_ring_cy + s_ring_r, bounds.size.w, 18));
+  s_next_layer = text_layer_create(GRect(0, bounds.size.h - 60, bounds.size.w, 18));
   text_layer_set_background_color(s_next_layer, GColorClear);
   text_layer_set_text_color(s_next_layer, color_teal());
   text_layer_set_text_alignment(s_next_layer, GTextAlignmentCenter);
   text_layer_set_font(s_next_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD));
   layer_add_child(window_layer, text_layer_get_layer(s_next_layer));
 
-  s_hint_layer = text_layer_create(GRect(6, bounds.size.h - 24, bounds.size.w - 12, 22));
+  s_hint_layer = text_layer_create(GRect(8, bounds.size.h - 40, bounds.size.w - 16, 36));
   text_layer_set_background_color(s_hint_layer, GColorClear);
   text_layer_set_text_color(s_hint_layer, color_sub());
   text_layer_set_text_alignment(s_hint_layer, GTextAlignmentCenter);
