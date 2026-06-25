@@ -13,7 +13,8 @@ enum {
   PERSIST_RUN_STARTED = 4,
   PERSIST_INTERVAL = 5,
   PERSIST_NEXT_VIBE_EPOCH = 6,
-  PERSIST_VIBE_COUNT = 7
+  PERSIST_VIBE_COUNT = 7,
+  PERSIST_FROZEN_CYCLE = 8
 };
 
 typedef struct {
@@ -48,6 +49,12 @@ static AppTimer *s_ui_timer;
 static TimerState s_state;
 static bool s_launched_by_wakeup;
 static int s_center_y;
+static int32_t s_frozen_cycle_elapsed;
+static Window *s_notify_window;
+static Layer *s_notify_canvas_layer;
+static TextLayer *s_notify_title_layer;
+static TextLayer *s_notify_elapsed_layer;
+static AppTimer *s_notify_exit_timer;
 
 static int32_t s_pick_minutes;
 static int32_t s_pick_seconds;
@@ -61,6 +68,7 @@ static char s_btn_up_text[16];
 static char s_btn_sel_text[16];
 static char s_btn_down_text[16];
 static char s_glance_text[96];
+static char s_notify_elapsed_text[16];
 static char s_pick_min_buf[8];
 static char s_pick_sec_buf[8];
 
@@ -169,6 +177,7 @@ static void state_save(void) {
   persist_write_int(PERSIST_INTERVAL, s_state.interval_seconds);
   persist_write_int(PERSIST_NEXT_VIBE_EPOCH, s_state.next_vibe_epoch);
   persist_write_int(PERSIST_VIBE_COUNT, s_state.vibe_count);
+  persist_write_int(PERSIST_FROZEN_CYCLE, s_frozen_cycle_elapsed);
 }
 
 static void state_load_or_default(void) {
@@ -179,6 +188,7 @@ static void state_load_or_default(void) {
     s_state.interval_seconds = DEFAULT_INTERVAL_SECONDS;
     s_state.next_vibe_epoch = now_seconds() + DEFAULT_INTERVAL_SECONDS;
     s_state.vibe_count = 0;
+    s_frozen_cycle_elapsed = 0;
     state_save();
     return;
   }
@@ -193,6 +203,7 @@ static void state_load_or_default(void) {
   s_state.interval_seconds = clamp_interval(s_state.interval_seconds);
   s_state.next_vibe_epoch = persist_read_int(PERSIST_NEXT_VIBE_EPOCH);
   s_state.vibe_count = persist_read_int(PERSIST_VIBE_COUNT);
+  s_frozen_cycle_elapsed = persist_read_int(PERSIST_FROZEN_CYCLE);
 }
 
 static void cancel_pending_wakeup(void) {
@@ -258,11 +269,16 @@ static void fill_update_proc(Layer *layer, GContext *ctx) {
   graphics_fill_rect(ctx, bounds, 0, GCornerNone);
 
   int32_t interval = s_state.interval_seconds > 0 ? s_state.interval_seconds : 1;
-  int32_t left = secs_to_vibe();
-  if (left > interval) {
-    left = interval;
+  int32_t elapsed_in_cycle;
+  if (s_state.running) {
+    int32_t left = secs_to_vibe();
+    if (left > interval) {
+      left = interval;
+    }
+    elapsed_in_cycle = interval - left;
+  } else {
+    elapsed_in_cycle = s_frozen_cycle_elapsed;
   }
-  int32_t elapsed_in_cycle = interval - left;
   if (elapsed_in_cycle < 0) {
     elapsed_in_cycle = 0;
   }
@@ -378,7 +394,11 @@ static void start_timer(void) {
   s_state.elapsed_accum = total_elapsed();
   s_state.running = true;
   s_state.run_started_epoch = now_seconds();
-  s_state.next_vibe_epoch = now_seconds() + s_state.interval_seconds;
+  int32_t remaining = s_state.interval_seconds - s_frozen_cycle_elapsed;
+  if (remaining < 1) {
+    remaining = s_state.interval_seconds;
+  }
+  s_state.next_vibe_epoch = now_seconds() + remaining;
   state_save();
   cancel_ui_tick();
   schedule_ui_tick();
@@ -387,6 +407,12 @@ static void start_timer(void) {
 }
 
 static void pause_timer(void) {
+  int32_t interval = s_state.interval_seconds > 0 ? s_state.interval_seconds : 1;
+  int32_t left = secs_to_vibe();
+  if (left > interval) {
+    left = interval;
+  }
+  s_frozen_cycle_elapsed = interval - left;
   s_state.elapsed_accum = total_elapsed();
   s_state.running = false;
   s_state.run_started_epoch = 0;
@@ -403,6 +429,7 @@ static void reset_timer(void) {
   s_state.run_started_epoch = 0;
   s_state.next_vibe_epoch = 0;
   s_state.vibe_count = 0;
+  s_frozen_cycle_elapsed = 0;
   state_save();
   cancel_pending_wakeup();
   cancel_ui_tick();
@@ -754,6 +781,64 @@ static void main_window_unload(Window *window) {
   s_fill_layer = NULL;
 }
 
+static void notify_canvas_update_proc(Layer *layer, GContext *ctx) {
+  GRect bounds = layer_get_bounds(layer);
+  graphics_context_set_fill_color(ctx, GColorBlack);
+  graphics_fill_rect(ctx, bounds, 0, GCornerNone);
+
+  int16_t card_h = 104;
+  GRect card = GRect(10, bounds.size.h / 2 - card_h / 2, bounds.size.w - 20, card_h);
+  graphics_context_set_fill_color(ctx, GColorWhite);
+  graphics_fill_rect(ctx, card, 8, GCornersAll);
+}
+
+static void notify_exit_handler(void *context) {
+  s_notify_exit_timer = NULL;
+  window_stack_pop_all(true);
+}
+
+static void notify_window_load(Window *window) {
+  Layer *window_layer = window_get_root_layer(window);
+  GRect bounds = layer_get_bounds(window_layer);
+
+  s_notify_canvas_layer = layer_create(bounds);
+  layer_set_update_proc(s_notify_canvas_layer, notify_canvas_update_proc);
+  layer_add_child(window_layer, s_notify_canvas_layer);
+
+  s_notify_title_layer = text_layer_create(GRect(10, bounds.size.h / 2 - 44, bounds.size.w - 20, 24));
+  text_layer_set_background_color(s_notify_title_layer, GColorClear);
+  text_layer_set_text_color(s_notify_title_layer, color_ink());
+  text_layer_set_text_alignment(s_notify_title_layer, GTextAlignmentCenter);
+  text_layer_set_font(s_notify_title_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD));
+  text_layer_set_text(s_notify_title_layer, "CountUpVibe");
+  layer_add_child(window_layer, text_layer_get_layer(s_notify_title_layer));
+
+  format_elapsed(total_elapsed(), s_notify_elapsed_text, sizeof(s_notify_elapsed_text));
+  s_notify_elapsed_layer = text_layer_create(GRect(10, bounds.size.h / 2 - 14, bounds.size.w - 20, 48));
+  text_layer_set_background_color(s_notify_elapsed_layer, GColorClear);
+  text_layer_set_text_color(s_notify_elapsed_layer, color_ink());
+  text_layer_set_text_alignment(s_notify_elapsed_layer, GTextAlignmentCenter);
+  text_layer_set_font(s_notify_elapsed_layer, fonts_get_system_font(FONT_KEY_LECO_42_NUMBERS));
+  text_layer_set_text(s_notify_elapsed_layer, s_notify_elapsed_text);
+  layer_add_child(window_layer, text_layer_get_layer(s_notify_elapsed_layer));
+
+  s_notify_exit_timer = app_timer_register(4000, notify_exit_handler, NULL);
+}
+
+static void notify_window_unload(Window *window) {
+  if (s_notify_exit_timer) {
+    app_timer_cancel(s_notify_exit_timer);
+    s_notify_exit_timer = NULL;
+  }
+  text_layer_destroy(s_notify_title_layer);
+  text_layer_destroy(s_notify_elapsed_layer);
+  layer_destroy(s_notify_canvas_layer);
+  s_notify_title_layer = NULL;
+  s_notify_elapsed_layer = NULL;
+  s_notify_canvas_layer = NULL;
+  s_notify_window = NULL;
+}
+
 static void wakeup_handler(WakeupId id, int32_t cookie) {
   fire_vibe();
 }
@@ -761,31 +846,35 @@ static void wakeup_handler(WakeupId id, int32_t cookie) {
 static void init(void) {
   state_load_or_default();
 
+  wakeup_service_subscribe(wakeup_handler);
+
   s_launched_by_wakeup = (launch_reason() == APP_LAUNCH_WAKEUP);
+
   if (s_launched_by_wakeup) {
     WakeupId id = 0;
     int32_t cookie = 0;
     wakeup_get_launch_event(&id, &cookie);
+    fire_vibe();
+    s_notify_window = window_create();
+    window_set_background_color(s_notify_window, GColorBlack);
+    window_set_window_handlers(s_notify_window, (WindowHandlers) {
+      .load = notify_window_load,
+      .unload = notify_window_unload
+    });
+    window_stack_push(s_notify_window, true);
+    update_app_glance_safe();
   } else {
     cancel_pending_wakeup();
+    s_main_window = window_create();
+    window_set_background_color(s_main_window, GColorWhite);
+    window_set_window_handlers(s_main_window, (WindowHandlers) {
+      .load = main_window_load,
+      .unload = main_window_unload
+    });
+    window_stack_push(s_main_window, true);
+    schedule_ui_tick();
+    update_app_glance_safe();
   }
-
-  wakeup_service_subscribe(wakeup_handler);
-
-  s_main_window = window_create();
-  window_set_background_color(s_main_window, GColorWhite);
-  window_set_window_handlers(s_main_window, (WindowHandlers) {
-    .load = main_window_load,
-    .unload = main_window_unload
-  });
-  window_stack_push(s_main_window, true);
-
-  if (s_launched_by_wakeup && s_state.running && now_seconds() >= s_state.next_vibe_epoch) {
-    fire_vibe();
-  }
-
-  schedule_ui_tick();
-  update_app_glance_safe();
 }
 
 static void deinit(void) {
@@ -795,10 +884,15 @@ static void deinit(void) {
   while (window_stack_get_top_window() && window_stack_get_top_window() != s_main_window) {
     window_stack_pop(false);
   }
+  if (s_notify_window) {
+    window_destroy(s_notify_window);
+  }
   if (s_picker_window) {
     window_destroy(s_picker_window);
   }
-  window_destroy(s_main_window);
+  if (s_main_window) {
+    window_destroy(s_main_window);
+  }
 }
 
 int main(void) {
