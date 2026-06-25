@@ -1,11 +1,12 @@
 #include <pebble.h>
 #include <string.h>
 
+#define INTERVAL_GRID_SECONDS 15
 #define DEFAULT_INTERVAL_SECONDS (5 * 60)
-#define MIN_INTERVAL_SECONDS 10
+#define MIN_INTERVAL_SECONDS INTERVAL_GRID_SECONDS
 #define MAX_INTERVAL_SECONDS (99 * 60 + 59)
 #define EDIT_TIMEOUT_MS 15000
-#define SEC_STEP 15
+#define SEC_STEP INTERVAL_GRID_SECONDS
 
 #define COOKIE_VIBE 1
 
@@ -34,12 +35,8 @@ typedef struct {
 
 static Window *s_main_window;
 static Layer *s_fill_layer;
-static Layer *s_edit_box_layer;
 static TextLayer *s_clock_layer;
 static TextLayer *s_status_layer;
-static TextLayer *s_c_min_layer;
-static TextLayer *s_c_colon_layer;
-static TextLayer *s_c_sec_layer;
 static TextLayer *s_c_timer_layer;
 static TextLayer *s_b_timer_layer;
 static TextLayer *s_b_interval_layer;
@@ -64,6 +61,7 @@ static int s_box_w;
 static int s_screen_h;
 static int16_t s_edit_freeze_h;
 static GPath *s_back_arrow;
+static GFont s_font_big;
 
 static char s_clock_text[16];
 static char s_status_text[16];
@@ -109,8 +107,10 @@ static int32_t now_seconds(void) {
 }
 
 static int32_t next_vibe_after(int32_t t) {
-  int32_t interval = s_state.interval_seconds > 0 ? s_state.interval_seconds : 1;
-  return ((t / interval) + 1) * interval;
+  int32_t g = INTERVAL_GRID_SECONDS;
+  int32_t interval = s_state.interval_seconds > 0 ? s_state.interval_seconds : g;
+  int32_t down = (t / g) * g;
+  return down + interval;
 }
 
 static int32_t total_elapsed(void) {
@@ -312,20 +312,25 @@ static void fill_update_proc(Layer *layer, GContext *ctx) {
     graphics_context_set_fill_color(ctx, GColorBlack);
     gpath_draw_filled(ctx, s_back_arrow);
   }
-}
 
-static void edit_box_update_proc(Layer *layer, GContext *ctx) {
-  GRect bounds = layer_get_bounds(layer);
-  graphics_context_set_fill_color(ctx, GColorBlack);
-  graphics_fill_rect(ctx, bounds, 6, GCornersAll);
-}
+  if (s_mode == MODE_EDIT && s_font_big) {
+    int16_t cy = s_center_y;
+    int16_t bx = (s_edit_field == FIELD_MIN) ? s_min_x : s_sec_x;
+    GRect box = GRect(bx, cy - 22, s_box_w, 44);
+    graphics_context_set_fill_color(ctx, GColorBlack);
+    graphics_fill_rect(ctx, box, 6, GCornersAll);
 
-static void set_edit_box_position(void) {
-  if (!s_edit_box_layer) {
-    return;
+    GRect min_rect = GRect(s_min_x, cy - 22, s_box_w, 44);
+    GRect col_rect = GRect(s_colon_x - 10, cy - 22, 20, 44);
+    GRect sec_rect = GRect(s_sec_x, cy - 22, s_box_w, 44);
+
+    graphics_context_set_text_color(ctx, (s_edit_field == FIELD_MIN) ? GColorWhite : color_ink());
+    graphics_draw_text(ctx, s_min_buf, s_font_big, min_rect, GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
+    graphics_context_set_text_color(ctx, color_ink());
+    graphics_draw_text(ctx, ":", s_font_big, col_rect, GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
+    graphics_context_set_text_color(ctx, (s_edit_field == FIELD_SEC) ? GColorWhite : color_ink());
+    graphics_draw_text(ctx, s_sec_buf, s_font_big, sec_rect, GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
   }
-  int x = (s_edit_field == FIELD_MIN) ? s_min_x : s_sec_x;
-  layer_set_frame(s_edit_box_layer, GRect(x, s_center_y - 22, s_box_w, 44));
 }
 
 static void update_clock_text(void) {
@@ -337,24 +342,8 @@ static void update_clock_text(void) {
 static void update_edit_display(void) {
   snprintf(s_min_buf, sizeof(s_min_buf), "%02ld", (long)s_edit_min);
   snprintf(s_sec_buf, sizeof(s_sec_buf), "%02ld", (long)s_edit_sec);
-  if (s_c_min_layer) {
-    text_layer_set_text(s_c_min_layer, s_min_buf);
-  }
-  if (s_c_sec_layer) {
-    text_layer_set_text(s_c_sec_layer, s_sec_buf);
-  }
-  if (s_c_colon_layer) {
-    text_layer_set_text(s_c_colon_layer, ":");
-  }
-
-  bool min_active = (s_edit_field == FIELD_MIN);
-  if (s_c_min_layer) {
-    text_layer_set_background_color(s_c_min_layer, GColorClear);
-    text_layer_set_text_color(s_c_min_layer, min_active ? GColorWhite : color_ink());
-  }
-  if (s_c_sec_layer) {
-    text_layer_set_background_color(s_c_sec_layer, GColorClear);
-    text_layer_set_text_color(s_c_sec_layer, !min_active ? GColorWhite : color_ink());
+  if (s_fill_layer) {
+    layer_mark_dirty(s_fill_layer);
   }
 }
 
@@ -384,15 +373,6 @@ static void update_button_labels(void) {
 
 static void apply_mode_layout(void) {
   bool edit = (s_mode == MODE_EDIT);
-  if (s_c_min_layer) {
-    layer_set_hidden(text_layer_get_layer(s_c_min_layer), !edit);
-  }
-  if (s_c_colon_layer) {
-    layer_set_hidden(text_layer_get_layer(s_c_colon_layer), !edit);
-  }
-  if (s_c_sec_layer) {
-    layer_set_hidden(text_layer_get_layer(s_c_sec_layer), !edit);
-  }
   if (s_c_timer_layer) {
     layer_set_hidden(text_layer_get_layer(s_c_timer_layer), edit);
   }
@@ -401,10 +381,6 @@ static void apply_mode_layout(void) {
   }
   if (s_b_interval_layer) {
     layer_set_hidden(text_layer_get_layer(s_b_interval_layer), edit);
-  }
-  if (s_edit_box_layer) {
-    layer_set_hidden(s_edit_box_layer, !edit);
-    set_edit_box_position();
   }
   update_edit_display();
   update_button_labels();
@@ -462,10 +438,17 @@ static void fire_vibe(void) {
   if (now < s_state.next_vibe_epoch) {
     return;
   }
+  int32_t interval = s_state.interval_seconds > 0 ? s_state.interval_seconds : INTERVAL_GRID_SECONDS;
+  int32_t base = s_state.next_vibe_epoch;
 
   vibes_enqueue_custom_pattern(s_vibe_pattern);
   s_state.vibe_count += 1;
-  s_state.next_vibe_epoch = next_vibe_after(now);
+
+  int32_t diff = now - base;
+  if (diff < 0) {
+    diff = 0;
+  }
+  s_state.next_vibe_epoch = base + (diff / interval + 1) * interval;
   state_save();
   update_app_glance_safe();
 }
@@ -634,7 +617,6 @@ static void center_click_handler(ClickRecognizerRef recognizer, void *context) {
     if (s_edit_field == FIELD_MIN) {
       s_edit_field = FIELD_SEC;
       update_edit_display();
-      set_edit_box_position();
       update_button_labels();
       reset_edit_timeout();
     } else {
@@ -670,25 +652,17 @@ static void main_window_load(Window *window) {
   GPathInfo arrow_info = { .num_points = 3, .points = arrow_pts };
   s_back_arrow = gpath_create(&arrow_info);
 
+  s_font_big = fonts_get_system_font(FONT_KEY_LECO_42_NUMBERS);
+
   s_fill_layer = layer_create(bounds);
   layer_set_update_proc(s_fill_layer, fill_update_proc);
   layer_add_child(window_layer, s_fill_layer);
-
-  s_edit_box_layer = layer_create(GRect(s_min_x, s_center_y - 22, s_box_w, 44));
-  layer_set_update_proc(s_edit_box_layer, edit_box_update_proc);
-  layer_add_child(window_layer, s_edit_box_layer);
 
   s_clock_layer = make_label(window_layer, GRect(0, 3, bounds.size.w, 20),
                              GTextAlignmentCenter, FONT_KEY_LECO_20_BOLD_NUMBERS, color_ink());
   s_status_layer = make_label(window_layer, GRect(0, 24, bounds.size.w, 20),
                               GTextAlignmentCenter, FONT_KEY_GOTHIC_18_BOLD, color_ink());
 
-  s_c_min_layer = make_label(window_layer, GRect(s_min_x, s_center_y - 22, s_box_w, 44),
-                             GTextAlignmentCenter, FONT_KEY_LECO_42_NUMBERS, color_ink());
-  s_c_colon_layer = make_label(window_layer, GRect(s_colon_x - 10, s_center_y - 22, 20, 44),
-                               GTextAlignmentCenter, FONT_KEY_LECO_42_NUMBERS, color_ink());
-  s_c_sec_layer = make_label(window_layer, GRect(s_sec_x, s_center_y - 22, s_box_w, 44),
-                             GTextAlignmentCenter, FONT_KEY_LECO_42_NUMBERS, color_ink());
   s_c_timer_layer = make_label(window_layer, GRect(0, s_center_y - 22, bounds.size.w, 44),
                                GTextAlignmentCenter, FONT_KEY_LECO_42_NUMBERS, color_ink());
 
@@ -721,16 +695,9 @@ static void main_window_unload(Window *window) {
   text_layer_destroy(s_b_interval_layer);
   text_layer_destroy(s_b_timer_layer);
   text_layer_destroy(s_c_timer_layer);
-  text_layer_destroy(s_c_sec_layer);
-  text_layer_destroy(s_c_colon_layer);
-  text_layer_destroy(s_c_min_layer);
   text_layer_destroy(s_status_layer);
   text_layer_destroy(s_clock_layer);
   layer_destroy(s_fill_layer);
-  if (s_edit_box_layer) {
-    layer_destroy(s_edit_box_layer);
-    s_edit_box_layer = NULL;
-  }
   if (s_back_arrow) {
     gpath_destroy(s_back_arrow);
     s_back_arrow = NULL;
@@ -741,12 +708,10 @@ static void main_window_unload(Window *window) {
   s_b_interval_layer = NULL;
   s_b_timer_layer = NULL;
   s_c_timer_layer = NULL;
-  s_c_sec_layer = NULL;
-  s_c_colon_layer = NULL;
-  s_c_min_layer = NULL;
   s_status_layer = NULL;
   s_clock_layer = NULL;
   s_fill_layer = NULL;
+  s_font_big = NULL;
 }
 
 static void wakeup_handler(WakeupId id, int32_t cookie) {
