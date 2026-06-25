@@ -266,19 +266,19 @@ static void compute_layout(GRect bounds) {
 }
 
 static void draw_up_arrow(GContext *ctx, GPoint c) {
-  graphics_draw_line(ctx, GPoint(c.x, c.y - 8), GPoint(c.x, c.y + 8));
-  graphics_draw_line(ctx, GPoint(c.x, c.y - 8), GPoint(c.x - 6, c.y - 2));
-  graphics_draw_line(ctx, GPoint(c.x, c.y - 8), GPoint(c.x + 6, c.y - 2));
+  graphics_draw_line(ctx, GPoint(c.x, c.y - 6), GPoint(c.x, c.y + 5));
+  graphics_draw_line(ctx, GPoint(c.x, c.y - 6), GPoint(c.x - 4, c.y - 2));
+  graphics_draw_line(ctx, GPoint(c.x, c.y - 6), GPoint(c.x + 4, c.y - 2));
 }
 
 static void draw_down_arrow(GContext *ctx, GPoint c) {
-  graphics_draw_line(ctx, GPoint(c.x, c.y - 8), GPoint(c.x, c.y + 8));
-  graphics_draw_line(ctx, GPoint(c.x, c.y + 8), GPoint(c.x - 6, c.y + 2));
-  graphics_draw_line(ctx, GPoint(c.x, c.y + 8), GPoint(c.x + 6, c.y + 2));
+  graphics_draw_line(ctx, GPoint(c.x, c.y - 5), GPoint(c.x, c.y + 6));
+  graphics_draw_line(ctx, GPoint(c.x, c.y + 6), GPoint(c.x - 4, c.y + 2));
+  graphics_draw_line(ctx, GPoint(c.x, c.y + 6), GPoint(c.x + 4, c.y + 2));
 }
 
 static void draw_play_icon(GContext *ctx, GPoint c) {
-  GPoint points[3] = { GPoint(c.x - 5, c.y - 8), GPoint(c.x - 5, c.y + 8), GPoint(c.x + 8, c.y) };
+  GPoint points[3] = { GPoint(c.x - 3, c.y - 6), GPoint(c.x - 3, c.y + 6), GPoint(c.x + 6, c.y) };
   GPathInfo info = { .num_points = 3, .points = points };
   GPath *path = gpath_create(&info);
   gpath_draw_filled(ctx, path);
@@ -286,45 +286,44 @@ static void draw_play_icon(GContext *ctx, GPoint c) {
 }
 
 static void draw_pause_icon(GContext *ctx, GPoint c) {
-  graphics_fill_rect(ctx, GRect(c.x - 7, c.y - 8, 5, 16), 0, GCornerNone);
-  graphics_fill_rect(ctx, GRect(c.x + 2, c.y - 8, 5, 16), 0, GCornerNone);
+  graphics_fill_rect(ctx, GRect(c.x - 5, c.y - 6, 3, 12), 0, GCornerNone);
+  graphics_fill_rect(ctx, GRect(c.x + 2, c.y - 6, 3, 12), 0, GCornerNone);
 }
 
 static void draw_check_icon(GContext *ctx, GPoint c) {
-  graphics_draw_line(ctx, GPoint(c.x - 8, c.y), GPoint(c.x - 2, c.y + 7));
-  graphics_draw_line(ctx, GPoint(c.x - 2, c.y + 7), GPoint(c.x + 9, c.y - 8));
+  graphics_draw_line(ctx, GPoint(c.x - 6, c.y), GPoint(c.x - 2, c.y + 5));
+  graphics_draw_line(ctx, GPoint(c.x - 2, c.y + 5), GPoint(c.x + 7, c.y - 6));
 }
 
 static void draw_reset_icon(GContext *ctx, GPoint c) {
-  graphics_draw_circle(ctx, c, 8);
-  graphics_draw_line(ctx, GPoint(c.x - 8, c.y - 1), GPoint(c.x - 12, c.y - 6));
-  graphics_draw_line(ctx, GPoint(c.x - 8, c.y - 1), GPoint(c.x - 2, c.y - 5));
+  graphics_draw_circle(ctx, c, 6);
+  graphics_draw_line(ctx, GPoint(c.x - 5, c.y - 2), GPoint(c.x - 8, c.y - 6));
+  graphics_draw_line(ctx, GPoint(c.x - 5, c.y - 2), GPoint(c.x - 1, c.y - 5));
 }
 
-static void draw_spanner_icon(GContext *ctx, GPoint c) {
-  graphics_draw_line(ctx, GPoint(c.x - 8, c.y + 8), GPoint(c.x + 5, c.y - 5));
-  graphics_draw_circle(ctx, GPoint(c.x + 6, c.y - 6), 4);
-  graphics_fill_circle(ctx, GPoint(c.x - 8, c.y + 8), 3);
-}
-
-static void draw_door_icon(GContext *ctx, GPoint c) {
-  graphics_draw_rect(ctx, GRect(c.x - 7, c.y - 9, 12, 18));
-  graphics_draw_line(ctx, GPoint(c.x - 5, c.y - 7), GPoint(c.x + 8, c.y - 10));
-  graphics_draw_line(ctx, GPoint(c.x + 8, c.y - 10), GPoint(c.x + 8, c.y + 10));
-  graphics_draw_line(ctx, GPoint(c.x + 8, c.y + 10), GPoint(c.x - 5, c.y + 7));
-  graphics_fill_rect(ctx, GRect(c.x + 4, c.y, 2, 2), 0, GCornerNone);
+static void draw_gear_icon(GContext *ctx, GPoint c) {
+  graphics_draw_circle(ctx, c, 5);
+  graphics_fill_circle(ctx, c, 2);
+  graphics_draw_line(ctx, GPoint(c.x, c.y - 9), GPoint(c.x, c.y - 7));
+  graphics_draw_line(ctx, GPoint(c.x, c.y + 7), GPoint(c.x, c.y + 9));
+  graphics_draw_line(ctx, GPoint(c.x - 9, c.y), GPoint(c.x - 7, c.y));
+  graphics_draw_line(ctx, GPoint(c.x + 7, c.y), GPoint(c.x + 9, c.y));
+  graphics_draw_line(ctx, GPoint(c.x - 6, c.y - 6), GPoint(c.x - 5, c.y - 5));
+  graphics_draw_line(ctx, GPoint(c.x + 5, c.y - 5), GPoint(c.x + 6, c.y - 6));
+  graphics_draw_line(ctx, GPoint(c.x - 6, c.y + 6), GPoint(c.x - 5, c.y + 5));
+  graphics_draw_line(ctx, GPoint(c.x + 5, c.y + 5), GPoint(c.x + 6, c.y + 6));
 }
 
 static void draw_button_symbols(GContext *ctx, GRect bounds) {
   graphics_context_set_fill_color(ctx, GColorBlack);
   graphics_context_set_stroke_color(ctx, GColorBlack);
-  graphics_context_set_stroke_width(ctx, 2);
+  graphics_context_set_stroke_width(ctx, 1);
 
-  int16_t x = bounds.size.w - 10;
+  int16_t x = bounds.size.w - 9;
   if (s_mode == MODE_EDIT) {
     draw_up_arrow(ctx, GPoint(x, 15));
     if (s_edit_field == FIELD_MIN) {
-      draw_spanner_icon(ctx, GPoint(x, s_center_y));
+      draw_gear_icon(ctx, GPoint(x, s_center_y));
     } else {
       draw_check_icon(ctx, GPoint(x, s_center_y));
     }
@@ -335,7 +334,7 @@ static void draw_button_symbols(GContext *ctx, GRect bounds) {
     } else {
       draw_play_icon(ctx, GPoint(x, 15));
     }
-    draw_spanner_icon(ctx, GPoint(x, s_center_y));
+    draw_gear_icon(ctx, GPoint(x, s_center_y));
     if (s_state.running || total_elapsed() > 0) {
       draw_reset_icon(ctx, GPoint(x, bounds.size.h - 17));
     } else {
@@ -343,7 +342,6 @@ static void draw_button_symbols(GContext *ctx, GRect bounds) {
     }
   }
 
-  draw_door_icon(ctx, GPoint(8, s_center_y));
 }
 
 static int16_t compute_live_fill_height(int16_t h) {
