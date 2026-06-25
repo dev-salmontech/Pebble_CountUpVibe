@@ -65,6 +65,8 @@ static int s_min_x;
 static int s_sec_x;
 static int s_colon_x;
 static int s_box_w;
+static int s_screen_h;
+static int16_t s_edit_freeze_h;
 
 static char s_clock_text[16];
 static char s_status_text[16];
@@ -251,19 +253,10 @@ static GColor color_water(void) {
 static GColor color_ink(void) {
   return GColorBlack;
 }
-static GColor color_accent(void) {
-#ifdef PBL_COLOR
-  return GColorFromHEX(0x1262B5);
-#else
-  return GColorBlack;
-#endif
-}
-static GColor color_sub(void) {
-  return GColorDarkGray;
-}
 
 static void compute_layout(GRect bounds) {
   s_center_y = bounds.size.h / 2 + 4;
+  s_screen_h = bounds.size.h;
   s_box_w = 46;
   int16_t row_w = s_box_w * 2 + 30;
   int16_t row_left = (bounds.size.w - row_w) / 2;
@@ -272,7 +265,7 @@ static void compute_layout(GRect bounds) {
   s_sec_x = row_left + s_box_w + 30;
 }
 
-static int16_t compute_fill_height(int16_t h) {
+static int16_t compute_live_fill_height(int16_t h) {
   int32_t interval = s_state.interval_seconds > 0 ? s_state.interval_seconds : 1;
   int32_t elapsed_in_cycle;
   if (s_state.running) {
@@ -293,6 +286,13 @@ static int16_t compute_fill_height(int16_t h) {
   return (int16_t)((elapsed_in_cycle * h) / interval);
 }
 
+static int16_t compute_fill_height(int16_t h) {
+  if (s_mode == MODE_EDIT) {
+    return s_edit_freeze_h;
+  }
+  return compute_live_fill_height(h);
+}
+
 static void fill_update_proc(Layer *layer, GContext *ctx) {
   GRect bounds = layer_get_bounds(layer);
   graphics_context_set_fill_color(ctx, GColorWhite);
@@ -301,6 +301,13 @@ static void fill_update_proc(Layer *layer, GContext *ctx) {
   graphics_context_set_fill_color(ctx, color_water());
   GRect fill = GRect(0, bounds.size.h - fill_h, bounds.size.w, fill_h);
   graphics_fill_rect(ctx, fill, 0, GCornerNone);
+
+  if (s_mode == MODE_EDIT) {
+    int16_t bx = (s_edit_field == FIELD_MIN) ? s_min_x : s_sec_x;
+    GRect box = GRect(bx, s_center_y - 22, s_box_w, 44);
+    graphics_context_set_fill_color(ctx, GColorBlack);
+    graphics_fill_rect(ctx, box, 6, GCornersAll);
+  }
 }
 
 static void update_clock_text(void) {
@@ -324,12 +331,15 @@ static void update_edit_display(void) {
 
   bool min_active = (s_edit_field == FIELD_MIN);
   if (s_c_min_layer) {
-    text_layer_set_background_color(s_c_min_layer, min_active ? GColorBlack : GColorClear);
+    text_layer_set_background_color(s_c_min_layer, GColorClear);
     text_layer_set_text_color(s_c_min_layer, min_active ? GColorWhite : color_ink());
   }
   if (s_c_sec_layer) {
-    text_layer_set_background_color(s_c_sec_layer, !min_active ? GColorBlack : GColorClear);
+    text_layer_set_background_color(s_c_sec_layer, GColorClear);
     text_layer_set_text_color(s_c_sec_layer, !min_active ? GColorWhite : color_ink());
+  }
+  if (s_fill_layer) {
+    layer_mark_dirty(s_fill_layer);
   }
 }
 
@@ -384,15 +394,16 @@ static void apply_mode_layout(void) {
 static void update_ui(void) {
   update_clock_text();
 
+  int32_t elapsed = total_elapsed();
   if (s_state.running) {
     snprintf(s_status_text, sizeof(s_status_text), "RUNNING");
-  } else if (total_elapsed() > 0) {
+  } else if (elapsed > 0) {
     snprintf(s_status_text, sizeof(s_status_text), "PAUSED");
   } else {
     snprintf(s_status_text, sizeof(s_status_text), "READY");
   }
 
-  format_elapsed(total_elapsed(), s_timer_text, sizeof(s_timer_text));
+  format_elapsed(elapsed, s_timer_text, sizeof(s_timer_text));
   format_mmss(s_state.interval_seconds, s_interval_text, sizeof(s_interval_text));
 
   if (s_clock_layer && strcmp(s_clock_text, s_last_clock) != 0) {
@@ -516,6 +527,7 @@ static void apply_interval(int32_t total_seconds) {
   }
   state_save();
   update_app_glance_safe();
+  s_last_fill_h = -1;
   update_ui();
 }
 
@@ -544,6 +556,7 @@ static void edit_timeout_handler(void *context) {
 }
 
 static void enter_edit_mode(void) {
+  s_edit_freeze_h = compute_live_fill_height(s_screen_h);
   s_mode = MODE_EDIT;
   s_edit_field = FIELD_MIN;
   s_edit_min = s_state.interval_seconds / 60;
@@ -643,7 +656,7 @@ static void main_window_load(Window *window) {
   s_clock_layer = make_label(window_layer, GRect(0, 3, bounds.size.w, 20),
                              GTextAlignmentCenter, FONT_KEY_LECO_20_BOLD_NUMBERS, color_ink());
   s_status_layer = make_label(window_layer, GRect(0, 24, bounds.size.w, 20),
-                              GTextAlignmentCenter, FONT_KEY_GOTHIC_18_BOLD, color_accent());
+                              GTextAlignmentCenter, FONT_KEY_GOTHIC_18_BOLD, color_ink());
 
   s_c_min_layer = make_label(window_layer, GRect(s_min_x, s_center_y - 22, s_box_w, 44),
                              GTextAlignmentCenter, FONT_KEY_LECO_42_NUMBERS, color_ink());
@@ -655,17 +668,17 @@ static void main_window_load(Window *window) {
                                GTextAlignmentCenter, FONT_KEY_LECO_42_NUMBERS, color_ink());
 
   s_b_timer_layer = make_label(window_layer, GRect(0, bounds.size.h - 32, bounds.size.w, 26),
-                               GTextAlignmentCenter, FONT_KEY_LECO_26_BOLD_NUMBERS_AM_PM, color_accent());
+                               GTextAlignmentCenter, FONT_KEY_LECO_26_BOLD_NUMBERS_AM_PM, color_ink());
   s_b_interval_layer = make_label(window_layer, GRect(0, bounds.size.h - 32, bounds.size.w, 26),
-                                  GTextAlignmentCenter, FONT_KEY_LECO_26_BOLD_NUMBERS_AM_PM, color_accent());
+                                  GTextAlignmentCenter, FONT_KEY_LECO_26_BOLD_NUMBERS_AM_PM, color_ink());
 
   int16_t btn_x = bounds.size.w - 44;
   s_btn_up_layer = make_label(window_layer, GRect(btn_x, 6, 40, 18),
-                              GTextAlignmentRight, FONT_KEY_GOTHIC_14_BOLD, color_sub());
+                              GTextAlignmentRight, FONT_KEY_GOTHIC_14_BOLD, color_ink());
   s_btn_center_layer = make_label(window_layer, GRect(btn_x, s_center_y - 9, 40, 18),
-                                  GTextAlignmentRight, FONT_KEY_GOTHIC_14_BOLD, color_sub());
+                                  GTextAlignmentRight, FONT_KEY_GOTHIC_14_BOLD, color_ink());
   s_btn_down_layer = make_label(window_layer, GRect(btn_x, bounds.size.h - 26, 40, 18),
-                                GTextAlignmentRight, FONT_KEY_GOTHIC_14_BOLD, color_sub());
+                                GTextAlignmentRight, FONT_KEY_GOTHIC_14_BOLD, color_ink());
 
   apply_mode_layout();
   update_ui();
@@ -752,7 +765,6 @@ static void notify_window_unload(Window *window) {
   s_notify_title_layer = NULL;
   s_notify_elapsed_layer = NULL;
   s_notify_canvas_layer = NULL;
-  s_notify_window = NULL;
 }
 
 static void wakeup_handler(WakeupId id, int32_t cookie) {
