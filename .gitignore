@@ -1,0 +1,10 @@
+build/
+dist/
+*.pbw
+*.pbl
+*.elf
+*.o
+*.pyc
+__pycache__/
+.waf-*
+.lock-waf_*

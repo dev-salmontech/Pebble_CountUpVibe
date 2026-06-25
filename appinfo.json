@@ -1,0 +1,26 @@
+{
+  "uuid": "2e75ad4f-9a7d-4cc7-8f3b-b9d011184db9",
+  "shortName": "CountUpVibe",
+  "longName": "Pebble CountUpVibe",
+  "companyName": "SalmonTech",
+  "versionLabel": "0.1.0",
+  "versionCode": 1,
+  "sdkVersion": "4",
+  "targetPlatforms": [
+    "aplite",
+    "basalt",
+    "chalk",
+    "diorite",
+    "emery"
+  ],
+  "watchapp": {
+    "watchface": false
+  },
+  "capabilities": [
+    "configurable"
+  ],
+  "appKeys": {},
+  "resources": {
+    "media": []
+  }
+}
