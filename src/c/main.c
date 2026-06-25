@@ -58,6 +58,7 @@ static int s_min_x;
 static int s_sec_x;
 static int s_colon_x;
 static int s_box_w;
+static int s_box_h;
 static int s_screen_h;
 static int16_t s_edit_freeze_h;
 static GPath *s_back_arrow;
@@ -258,12 +259,17 @@ static GColor color_ink(void) {
 static void compute_layout(GRect bounds) {
   s_center_y = bounds.size.h / 2 + 4;
   s_screen_h = bounds.size.h;
-  s_box_w = 46;
-  int16_t row_w = s_box_w * 2 + 30;
-  int16_t row_left = (bounds.size.w - row_w) / 2;
+  s_box_w = 34;
+  s_box_h = 34;
+  int16_t row_w = s_box_w * 2 + 20;
+  int16_t content_w = bounds.size.w - 44;
+  int16_t row_left = (content_w - row_w) / 2;
+  if (row_left < 0) {
+    row_left = 0;
+  }
   s_min_x = row_left;
-  s_colon_x = row_left + s_box_w + 15;
-  s_sec_x = row_left + s_box_w + 30;
+  s_colon_x = row_left + s_box_w + 10;
+  s_sec_x = row_left + s_box_w + 20;
 }
 
 static int16_t compute_live_fill_height(int16_t h) {
@@ -316,13 +322,14 @@ static void fill_update_proc(Layer *layer, GContext *ctx) {
   if (s_mode == MODE_EDIT && s_font_big) {
     int16_t cy = s_center_y;
     int16_t bx = (s_edit_field == FIELD_MIN) ? s_min_x : s_sec_x;
-    GRect box = GRect(bx, cy - 22, s_box_w, 44);
+    int16_t top = cy - s_box_h / 2;
+    GRect box = GRect(bx, top, s_box_w, s_box_h);
     graphics_context_set_fill_color(ctx, GColorBlack);
     graphics_fill_rect(ctx, box, 6, GCornersAll);
 
-    GRect min_rect = GRect(s_min_x, cy - 22, s_box_w, 44);
-    GRect col_rect = GRect(s_colon_x - 10, cy - 22, 20, 44);
-    GRect sec_rect = GRect(s_sec_x, cy - 22, s_box_w, 44);
+    GRect min_rect = GRect(s_min_x, top, s_box_w, s_box_h);
+    GRect col_rect = GRect(s_colon_x - 8, top, 16, s_box_h);
+    GRect sec_rect = GRect(s_sec_x, top, s_box_w, s_box_h);
 
     graphics_context_set_text_color(ctx, (s_edit_field == FIELD_MIN) ? GColorWhite : color_ink());
     graphics_draw_text(ctx, s_min_buf, s_font_big, min_rect, GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
@@ -652,7 +659,7 @@ static void main_window_load(Window *window) {
   GPathInfo arrow_info = { .num_points = 3, .points = arrow_pts };
   s_back_arrow = gpath_create(&arrow_info);
 
-  s_font_big = fonts_get_system_font(FONT_KEY_LECO_42_NUMBERS);
+  s_font_big = fonts_get_system_font(FONT_KEY_LECO_26_BOLD_NUMBERS_AM_PM);
 
   s_fill_layer = layer_create(bounds);
   layer_set_update_proc(s_fill_layer, fill_update_proc);
