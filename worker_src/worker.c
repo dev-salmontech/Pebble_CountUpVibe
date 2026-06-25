@@ -1,3 +1,4 @@
+#include <pebble.h>
 #include <pebble_worker.h>
 
 #define DEFAULT_INTERVAL_SECONDS (5 * 60)
@@ -25,7 +26,6 @@ static int32_t s_elapsed_accum;
 static int32_t s_run_started_epoch;
 static int32_t s_interval_seconds;
 static int32_t s_last_vibe_elapsed;
-static char s_glance_text[96];
 
 static int32_t clamp_interval(int32_t interval_seconds) {
   if (interval_seconds < MIN_INTERVAL_SECONDS) {
@@ -64,42 +64,6 @@ static int32_t current_elapsed(void) {
     delta = 0;
   }
   return s_elapsed_accum + delta;
-}
-
-static void format_elapsed(int32_t elapsed_seconds, char *buffer, size_t buffer_size) {
-  int32_t hours = elapsed_seconds / 3600;
-  int32_t minutes = (elapsed_seconds / 60) % 60;
-  int32_t seconds = elapsed_seconds % 60;
-
-  if (hours > 0) {
-    snprintf(buffer, buffer_size, "%ld:%02ld:%02ld", (long)hours, (long)minutes, (long)seconds);
-  } else {
-    snprintf(buffer, buffer_size, "%ld:%02ld", (long)minutes, (long)seconds);
-  }
-}
-
-#if !PBL_PLATFORM_APLITE && defined(APP_GLANCE_SLICE_NO_EXPIRATION)
-static void glance_reload_handler(AppGlanceReloadSession *session, size_t limit, void *context) {
-  AppGlanceSlice slice = {
-    .expiration_time = APP_GLANCE_SLICE_NO_EXPIRATION,
-    .layout = {
-      .icon = APP_GLANCE_SLICE_DEFAULT_ICON,
-      .subtitle_template_string = s_glance_text
-    }
-  };
-  app_glance_add_slice(session, slice);
-}
-#endif
-
-static void update_app_glance(int32_t elapsed) {
-#if !PBL_PLATFORM_APLITE && defined(APP_GLANCE_SLICE_NO_EXPIRATION)
-  char elapsed_text[24];
-  format_elapsed(elapsed, elapsed_text, sizeof(elapsed_text));
-  snprintf(s_glance_text, sizeof(s_glance_text), "Vibed at %s, next %ld min",
-           elapsed_text,
-           (long)(s_interval_seconds / 60));
-  app_glance_reload(glance_reload_handler, NULL);
-#endif
 }
 
 static void schedule_next(void);
@@ -142,7 +106,6 @@ static void schedule_next(void) {
     vibes_short_pulse();
     s_last_vibe_elapsed = elapsed;
     persist_write_int(PERSIST_LAST_VIBE_ELAPSED, s_last_vibe_elapsed);
-    update_app_glance(elapsed);
     send_vibed_message(elapsed);
     next_due = elapsed + s_interval_seconds;
   }
