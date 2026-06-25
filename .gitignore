@@ -8,3 +8,5 @@ dist/
 __pycache__/
 .waf-*
 .lock-waf_*
+.env
+*.env
