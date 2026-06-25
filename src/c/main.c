@@ -3,6 +3,8 @@
 #define DEFAULT_INTERVAL_SECONDS (5 * 60)
 #define MIN_INTERVAL_SECONDS 10
 #define MAX_INTERVAL_SECONDS (99 * 60 + 59)
+#define EDIT_TIMEOUT_MS 15000
+#define SEC_STEP 15
 
 #define COOKIE_VIBE 1
 
@@ -17,6 +19,9 @@ enum {
   PERSIST_FROZEN_CYCLE = 8
 };
 
+enum { MODE_EDIT, MODE_RUN };
+enum { FIELD_MIN, FIELD_SEC };
+
 typedef struct {
   bool running;
   int32_t elapsed_accum;
@@ -27,50 +32,50 @@ typedef struct {
 } TimerState;
 
 static Window *s_main_window;
-static Window *s_picker_window;
+static Window *s_notify_window;
 static Layer *s_fill_layer;
-static Layer *s_picker_canvas_layer;
+static Layer *s_notify_canvas_layer;
 static TextLayer *s_clock_layer;
 static TextLayer *s_status_layer;
-static TextLayer *s_hero_layer;
-static TextLayer *s_next_layer;
+static TextLayer *s_c_min_layer;
+static TextLayer *s_c_colon_layer;
+static TextLayer *s_c_sec_layer;
+static TextLayer *s_c_timer_layer;
+static TextLayer *s_b_timer_layer;
+static TextLayer *s_b_interval_layer;
 static TextLayer *s_btn_up_layer;
-static TextLayer *s_btn_sel_layer;
+static TextLayer *s_btn_center_layer;
 static TextLayer *s_btn_down_layer;
-static TextLayer *s_picker_title_layer;
-static TextLayer *s_pk_btn_up_layer;
-static TextLayer *s_pk_btn_sel_layer;
-static TextLayer *s_pk_btn_down_layer;
-static TextLayer *s_pick_min_layer;
-static TextLayer *s_pick_sec_layer;
-static TextLayer *s_pick_min_label_layer;
-static TextLayer *s_pick_sec_label_layer;
-static AppTimer *s_ui_timer;
-static TimerState s_state;
-static bool s_launched_by_wakeup;
-static int s_center_y;
-static int32_t s_frozen_cycle_elapsed;
-static Window *s_notify_window;
-static Layer *s_notify_canvas_layer;
 static TextLayer *s_notify_title_layer;
 static TextLayer *s_notify_elapsed_layer;
+static AppTimer *s_ui_timer;
 static AppTimer *s_notify_exit_timer;
+static AppTimer *s_edit_timeout;
+static TimerState s_state;
+static bool s_launched_by_wakeup;
+static int32_t s_frozen_cycle_elapsed;
+static int s_mode;
+static int s_edit_field;
+static int32_t s_edit_min;
+static int32_t s_edit_sec;
 
-static int32_t s_pick_minutes;
-static int32_t s_pick_seconds;
-static int s_pick_field;
+static int s_center_y;
+static int s_min_x;
+static int s_sec_x;
+static int s_colon_x;
+static int s_box_w;
 
 static char s_clock_text[16];
 static char s_status_text[16];
-static char s_hero_text[16];
-static char s_next_text[24];
+static char s_timer_text[16];
+static char s_interval_text[12];
+static char s_min_buf[8];
+static char s_sec_buf[8];
 static char s_btn_up_text[16];
-static char s_btn_sel_text[16];
+static char s_btn_center_text[16];
 static char s_btn_down_text[16];
 static char s_glance_text[96];
 static char s_notify_elapsed_text[16];
-static char s_pick_min_buf[8];
-static char s_pick_sec_buf[8];
 
 static const uint32_t s_vibe_durations[] = { 150, 90, 320 };
 static const VibePattern s_vibe_pattern = {
@@ -81,6 +86,10 @@ static const VibePattern s_vibe_pattern = {
 static void update_ui(void);
 static void schedule_ui_tick(void);
 static void update_app_glance_safe(void);
+static void apply_mode_layout(void);
+static void update_edit_display(void);
+static void update_button_labels(void);
+static void edit_timeout_handler(void *context);
 
 static int32_t clamp_interval(int32_t interval_seconds) {
   if (interval_seconds < MIN_INTERVAL_SECONDS) {
@@ -244,22 +253,18 @@ static GColor color_accent(void) {
   return GColorBlack;
 #endif
 }
-static GColor color_next(void) {
-#ifdef PBL_COLOR
-  return GColorFromHEX(0x0B3D91);
-#else
-  return GColorBlack;
-#endif
-}
 static GColor color_sub(void) {
   return GColorDarkGray;
-}
-static GColor color_outline(void) {
-  return GColorLightGray;
 }
 
 static void compute_layout(GRect bounds) {
   s_center_y = bounds.size.h / 2 + 4;
+  s_box_w = 46;
+  int16_t row_w = s_box_w * 2 + 30;
+  int16_t row_left = (bounds.size.w - row_w) / 2;
+  s_min_x = row_left;
+  s_colon_x = row_left + s_box_w + 15;
+  s_sec_x = row_left + s_box_w + 30;
 }
 
 static void fill_update_proc(Layer *layer, GContext *ctx) {
@@ -298,33 +303,91 @@ static void update_clock_text(void) {
   strftime(s_clock_text, sizeof(s_clock_text), "%H:%M", tm);
 }
 
+static void update_edit_display(void) {
+  snprintf(s_min_buf, sizeof(s_min_buf), "%02ld", (long)s_edit_min);
+  snprintf(s_sec_buf, sizeof(s_sec_buf), "%02ld", (long)s_edit_sec);
+  if (s_c_min_layer) {
+    text_layer_set_text(s_c_min_layer, s_min_buf);
+  }
+  if (s_c_sec_layer) {
+    text_layer_set_text(s_c_sec_layer, s_sec_buf);
+  }
+  if (s_c_colon_layer) {
+    text_layer_set_text(s_c_colon_layer, ":");
+  }
+
+  bool min_active = (s_edit_field == FIELD_MIN);
+  if (s_c_min_layer) {
+    text_layer_set_background_color(s_c_min_layer, min_active ? GColorBlack : GColorClear);
+    text_layer_set_text_color(s_c_min_layer, min_active ? GColorWhite : color_ink());
+  }
+  if (s_c_sec_layer) {
+    text_layer_set_background_color(s_c_sec_layer, !min_active ? GColorBlack : GColorClear);
+    text_layer_set_text_color(s_c_sec_layer, !min_active ? GColorWhite : color_ink());
+  }
+}
+
+static void update_button_labels(void) {
+  if (s_mode == MODE_EDIT) {
+    snprintf(s_btn_up_text, sizeof(s_btn_up_text), "UP");
+    snprintf(s_btn_center_text, sizeof(s_btn_center_text),
+             s_edit_field == FIELD_MIN ? "SET" : "APPLY");
+    snprintf(s_btn_down_text, sizeof(s_btn_down_text), "DOWN");
+  } else {
+    snprintf(s_btn_up_text, sizeof(s_btn_up_text), s_state.running ? "PAUSE" : "RESUME");
+    snprintf(s_btn_center_text, sizeof(s_btn_center_text), "SET");
+    snprintf(s_btn_down_text, sizeof(s_btn_down_text),
+             (s_state.running || total_elapsed() > 0) ? "RESET" : "START");
+  }
+
+  if (s_btn_up_layer) {
+    text_layer_set_text(s_btn_up_layer, s_btn_up_text);
+  }
+  if (s_btn_center_layer) {
+    text_layer_set_text(s_btn_center_layer, s_btn_center_text);
+  }
+  if (s_btn_down_layer) {
+    text_layer_set_text(s_btn_down_layer, s_btn_down_text);
+  }
+}
+
+static void apply_mode_layout(void) {
+  bool edit = (s_mode == MODE_EDIT);
+  if (s_c_min_layer) {
+    layer_set_hidden(text_layer_get_layer(s_c_min_layer), !edit);
+  }
+  if (s_c_colon_layer) {
+    layer_set_hidden(text_layer_get_layer(s_c_colon_layer), !edit);
+  }
+  if (s_c_sec_layer) {
+    layer_set_hidden(text_layer_get_layer(s_c_sec_layer), !edit);
+  }
+  if (s_c_timer_layer) {
+    layer_set_hidden(text_layer_get_layer(s_c_timer_layer), edit);
+  }
+  if (s_b_timer_layer) {
+    layer_set_hidden(text_layer_get_layer(s_b_timer_layer), !edit);
+  }
+  if (s_b_interval_layer) {
+    layer_set_hidden(text_layer_get_layer(s_b_interval_layer), edit);
+  }
+  update_edit_display();
+  update_button_labels();
+}
+
 static void update_ui(void) {
   update_clock_text();
-  format_elapsed(total_elapsed(), s_hero_text, sizeof(s_hero_text));
 
   if (s_state.running) {
     snprintf(s_status_text, sizeof(s_status_text), "RUNNING");
-    char left_text[12];
-    format_mmss(secs_to_vibe(), left_text, sizeof(left_text));
-    snprintf(s_next_text, sizeof(s_next_text), "next %s", left_text);
-    snprintf(s_btn_up_text, sizeof(s_btn_up_text), "SET");
-    snprintf(s_btn_sel_text, sizeof(s_btn_sel_text), "PAUSE");
-    snprintf(s_btn_down_text, sizeof(s_btn_down_text), "RESET");
   } else if (total_elapsed() > 0) {
     snprintf(s_status_text, sizeof(s_status_text), "PAUSED");
-    snprintf(s_next_text, sizeof(s_next_text), "paused");
-    snprintf(s_btn_up_text, sizeof(s_btn_up_text), "SET");
-    snprintf(s_btn_sel_text, sizeof(s_btn_sel_text), "RESUME");
-    snprintf(s_btn_down_text, sizeof(s_btn_down_text), "RESET");
   } else {
     snprintf(s_status_text, sizeof(s_status_text), "READY");
-    char interval_text[12];
-    format_mmss(s_state.interval_seconds, interval_text, sizeof(interval_text));
-    snprintf(s_next_text, sizeof(s_next_text), "every %s", interval_text);
-    snprintf(s_btn_up_text, sizeof(s_btn_up_text), "SET");
-    snprintf(s_btn_sel_text, sizeof(s_btn_sel_text), "START");
-    snprintf(s_btn_down_text, sizeof(s_btn_down_text), "RESET");
   }
+
+  format_elapsed(total_elapsed(), s_timer_text, sizeof(s_timer_text));
+  format_mmss(s_state.interval_seconds, s_interval_text, sizeof(s_interval_text));
 
   if (s_clock_layer) {
     text_layer_set_text(s_clock_layer, s_clock_text);
@@ -332,21 +395,16 @@ static void update_ui(void) {
   if (s_status_layer) {
     text_layer_set_text(s_status_layer, s_status_text);
   }
-  if (s_hero_layer) {
-    text_layer_set_text(s_hero_layer, s_hero_text);
+  if (s_c_timer_layer) {
+    text_layer_set_text(s_c_timer_layer, s_timer_text);
   }
-  if (s_next_layer) {
-    text_layer_set_text(s_next_layer, s_next_text);
+  if (s_b_timer_layer) {
+    text_layer_set_text(s_b_timer_layer, s_timer_text);
   }
-  if (s_btn_up_layer) {
-    text_layer_set_text(s_btn_up_layer, s_btn_up_text);
+  if (s_b_interval_layer) {
+    text_layer_set_text(s_b_interval_layer, s_interval_text);
   }
-  if (s_btn_sel_layer) {
-    text_layer_set_text(s_btn_sel_layer, s_btn_sel_text);
-  }
-  if (s_btn_down_layer) {
-    text_layer_set_text(s_btn_down_layer, s_btn_down_text);
-  }
+  update_edit_display();
   if (s_fill_layer) {
     layer_mark_dirty(s_fill_layer);
   }
@@ -447,254 +505,116 @@ static void apply_interval(int32_t total_seconds) {
   update_ui();
 }
 
-typedef struct {
-  int16_t left_x, right_x, top, box_w, box_h, colon_x, colon_y;
-} PickerGeom;
-
-static void picker_geom(GRect bounds, PickerGeom *g) {
-  g->box_w = 50;
-  g->box_h = 62;
-  int16_t gap = 12;
-  int16_t row_w = g->box_w * 2 + gap;
-  int16_t row_left = (bounds.size.w - row_w) / 2;
-  g->left_x = row_left;
-  g->right_x = row_left + g->box_w + gap;
-  g->top = bounds.size.h / 2 - g->box_h / 2 - 6;
-  g->colon_x = bounds.size.w / 2;
-  g->colon_y = g->top + g->box_h / 2;
+static void reset_edit_timeout(void) {
+  if (s_edit_timeout) {
+    app_timer_cancel(s_edit_timeout);
+  }
+  s_edit_timeout = app_timer_register(EDIT_TIMEOUT_MS, edit_timeout_handler, NULL);
 }
 
-static void picker_refresh(void) {
-  snprintf(s_pick_min_buf, sizeof(s_pick_min_buf), "%02ld", (long)s_pick_minutes);
-  snprintf(s_pick_sec_buf, sizeof(s_pick_sec_buf), "%02ld", (long)s_pick_seconds);
-  if (s_pick_min_layer) {
-    text_layer_set_text(s_pick_min_layer, s_pick_min_buf);
-    text_layer_set_text_color(s_pick_min_layer, color_ink());
-  }
-  if (s_pick_sec_layer) {
-    text_layer_set_text(s_pick_sec_layer, s_pick_sec_buf);
-    text_layer_set_text_color(s_pick_sec_layer, color_ink());
-  }
-  if (s_picker_canvas_layer) {
-    layer_mark_dirty(s_picker_canvas_layer);
+static void cancel_edit_timeout(void) {
+  if (s_edit_timeout) {
+    app_timer_cancel(s_edit_timeout);
+    s_edit_timeout = NULL;
   }
 }
 
-static void picker_canvas_update_proc(Layer *layer, GContext *ctx) {
-  GRect bounds = layer_get_bounds(layer);
-  graphics_context_set_fill_color(ctx, GColorWhite);
-  graphics_fill_rect(ctx, bounds, 0, GCornerNone);
-
-  PickerGeom g;
-  picker_geom(bounds, &g);
-
-  for (int field = 0; field < 2; field++) {
-    int16_t x = field == 0 ? g.left_x : g.right_x;
-    GRect box = GRect(x, g.top, g.box_w, g.box_h);
-    if (field == s_pick_field) {
-      graphics_context_set_fill_color(ctx, color_water());
-      graphics_fill_rect(ctx, box, 6, GCornersAll);
-    } else {
-      graphics_context_set_stroke_color(ctx, color_outline());
-      graphics_context_set_stroke_width(ctx, 2);
-      graphics_draw_round_rect(ctx, box, 6);
-    }
-  }
-
-  graphics_context_set_fill_color(ctx, color_sub());
-  graphics_fill_circle(ctx, GPoint(g.colon_x, g.colon_y - 8), 3);
-  graphics_fill_circle(ctx, GPoint(g.colon_x, g.colon_y + 8), 3);
-}
-
-static void picker_up_click(ClickRecognizerRef recognizer, void *context) {
-  if (s_pick_field == 0) {
-    s_pick_minutes += 1;
-    if (s_pick_minutes > 99) {
-      s_pick_minutes = 0;
-    }
-  } else {
-    s_pick_seconds += 15;
-    if (s_pick_seconds >= 60) {
-      s_pick_seconds = 0;
-    }
-  }
-  picker_refresh();
-}
-
-static void picker_down_click(ClickRecognizerRef recognizer, void *context) {
-  if (s_pick_field == 0) {
-    s_pick_minutes -= 1;
-    if (s_pick_minutes < 0) {
-      s_pick_minutes = 99;
-    }
-  } else {
-    s_pick_seconds -= 15;
-    if (s_pick_seconds < 0) {
-      s_pick_seconds = 45;
-    }
-  }
-  picker_refresh();
-}
-
-static void picker_select_click(ClickRecognizerRef recognizer, void *context) {
-  if (s_pick_field == 0) {
-    s_pick_field = 1;
-    picker_refresh();
-  } else {
-    int32_t total = s_pick_minutes * 60 + s_pick_seconds;
+static void edit_timeout_handler(void *context) {
+  s_edit_timeout = NULL;
+  int32_t total = s_edit_min * 60 + s_edit_sec;
+  if (total != s_state.interval_seconds) {
     apply_interval(total);
-    window_stack_pop(true);
   }
+  s_mode = MODE_RUN;
+  apply_mode_layout();
 }
 
-static void picker_back_click(ClickRecognizerRef recognizer, void *context) {
-  int32_t total = s_pick_minutes * 60 + s_pick_seconds;
-  apply_interval(total);
-  window_stack_pop(true);
+static void enter_edit_mode(void) {
+  s_mode = MODE_EDIT;
+  s_edit_field = FIELD_MIN;
+  s_edit_min = s_state.interval_seconds / 60;
+  s_edit_sec = s_state.interval_seconds % 60;
+  apply_mode_layout();
+  reset_edit_timeout();
 }
 
-static void picker_click_config_provider(void *context) {
-  window_single_click_subscribe(BUTTON_ID_UP, picker_up_click);
-  window_single_click_subscribe(BUTTON_ID_DOWN, picker_down_click);
-  window_single_click_subscribe(BUTTON_ID_SELECT, picker_select_click);
-  window_single_click_subscribe(BUTTON_ID_BACK, picker_back_click);
-}
-
-static void picker_window_load(Window *window) {
-  Layer *window_layer = window_get_root_layer(window);
-  GRect bounds = layer_get_bounds(window_layer);
-
-  s_pick_minutes = s_state.interval_seconds / 60;
-  s_pick_seconds = s_state.interval_seconds % 60;
-  s_pick_field = 0;
-
-  s_picker_canvas_layer = layer_create(bounds);
-  layer_set_update_proc(s_picker_canvas_layer, picker_canvas_update_proc);
-  layer_add_child(window_layer, s_picker_canvas_layer);
-
-  PickerGeom g;
-  picker_geom(bounds, &g);
-
-  s_picker_title_layer = text_layer_create(GRect(0, 16, bounds.size.w, 26));
-  text_layer_set_background_color(s_picker_title_layer, GColorClear);
-  text_layer_set_text_color(s_picker_title_layer, color_sub());
-  text_layer_set_text_alignment(s_picker_title_layer, GTextAlignmentCenter);
-  text_layer_set_font(s_picker_title_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD));
-  text_layer_set_text(s_picker_title_layer, "VIBE INTERVAL");
-  layer_add_child(window_layer, text_layer_get_layer(s_picker_title_layer));
-
-  s_pick_min_layer = text_layer_create(GRect(g.left_x, g.top + 8, g.box_w, 46));
-  text_layer_set_background_color(s_pick_min_layer, GColorClear);
-  text_layer_set_text_alignment(s_pick_min_layer, GTextAlignmentCenter);
-  text_layer_set_font(s_pick_min_layer, fonts_get_system_font(FONT_KEY_LECO_38_BOLD_NUMBERS));
-  layer_add_child(window_layer, text_layer_get_layer(s_pick_min_layer));
-
-  s_pick_sec_layer = text_layer_create(GRect(g.right_x, g.top + 8, g.box_w, 46));
-  text_layer_set_background_color(s_pick_sec_layer, GColorClear);
-  text_layer_set_text_alignment(s_pick_sec_layer, GTextAlignmentCenter);
-  text_layer_set_font(s_pick_sec_layer, fonts_get_system_font(FONT_KEY_LECO_38_BOLD_NUMBERS));
-  layer_add_child(window_layer, text_layer_get_layer(s_pick_sec_layer));
-
-  s_pick_min_label_layer = text_layer_create(GRect(g.left_x, g.top + g.box_h + 4, g.box_w, 20));
-  text_layer_set_background_color(s_pick_min_label_layer, GColorClear);
-  text_layer_set_text_color(s_pick_min_label_layer, color_sub());
-  text_layer_set_text_alignment(s_pick_min_label_layer, GTextAlignmentCenter);
-  text_layer_set_font(s_pick_min_label_layer, fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD));
-  text_layer_set_text(s_pick_min_label_layer, "MIN");
-  layer_add_child(window_layer, text_layer_get_layer(s_pick_min_label_layer));
-
-  s_pick_sec_label_layer = text_layer_create(GRect(g.right_x, g.top + g.box_h + 4, g.box_w, 20));
-  text_layer_set_background_color(s_pick_sec_label_layer, GColorClear);
-  text_layer_set_text_color(s_pick_sec_label_layer, color_sub());
-  text_layer_set_text_alignment(s_pick_sec_label_layer, GTextAlignmentCenter);
-  text_layer_set_font(s_pick_sec_label_layer, fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD));
-  text_layer_set_text(s_pick_sec_label_layer, "SEC");
-  layer_add_child(window_layer, text_layer_get_layer(s_pick_sec_label_layer));
-
-  int16_t pbtn_x = bounds.size.w - 40;
-  s_pk_btn_up_layer = text_layer_create(GRect(pbtn_x, 6, 36, 18));
-  text_layer_set_background_color(s_pk_btn_up_layer, GColorClear);
-  text_layer_set_text_color(s_pk_btn_up_layer, color_ink());
-  text_layer_set_text_alignment(s_pk_btn_up_layer, GTextAlignmentRight);
-  text_layer_set_font(s_pk_btn_up_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD));
-  text_layer_set_text(s_pk_btn_up_layer, "+");
-  layer_add_child(window_layer, text_layer_get_layer(s_pk_btn_up_layer));
-
-  s_pk_btn_sel_layer = text_layer_create(GRect(pbtn_x, bounds.size.h / 2 - 9, 36, 18));
-  text_layer_set_background_color(s_pk_btn_sel_layer, GColorClear);
-  text_layer_set_text_color(s_pk_btn_sel_layer, color_ink());
-  text_layer_set_text_alignment(s_pk_btn_sel_layer, GTextAlignmentRight);
-  text_layer_set_font(s_pk_btn_sel_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD));
-  text_layer_set_text(s_pk_btn_sel_layer, "OK");
-  layer_add_child(window_layer, text_layer_get_layer(s_pk_btn_sel_layer));
-
-  s_pk_btn_down_layer = text_layer_create(GRect(pbtn_x, bounds.size.h - 26, 36, 18));
-  text_layer_set_background_color(s_pk_btn_down_layer, GColorClear);
-  text_layer_set_text_color(s_pk_btn_down_layer, color_ink());
-  text_layer_set_text_alignment(s_pk_btn_down_layer, GTextAlignmentRight);
-  text_layer_set_font(s_pk_btn_down_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD));
-  text_layer_set_text(s_pk_btn_down_layer, "-");
-  layer_add_child(window_layer, text_layer_get_layer(s_pk_btn_down_layer));
-
-  picker_refresh();
-}
-
-static void picker_window_unload(Window *window) {
-  text_layer_destroy(s_picker_title_layer);
-  text_layer_destroy(s_pick_min_layer);
-  text_layer_destroy(s_pick_sec_layer);
-  text_layer_destroy(s_pick_min_label_layer);
-  text_layer_destroy(s_pick_sec_label_layer);
-  text_layer_destroy(s_pk_btn_up_layer);
-  text_layer_destroy(s_pk_btn_sel_layer);
-  text_layer_destroy(s_pk_btn_down_layer);
-  layer_destroy(s_picker_canvas_layer);
-  s_picker_title_layer = NULL;
-  s_pick_min_layer = NULL;
-  s_pick_sec_layer = NULL;
-  s_pick_min_label_layer = NULL;
-  s_pick_sec_label_layer = NULL;
-  s_pk_btn_up_layer = NULL;
-  s_pk_btn_sel_layer = NULL;
-  s_pk_btn_down_layer = NULL;
-  s_picker_canvas_layer = NULL;
-}
-
-static void show_picker(void) {
-  if (!s_picker_window) {
-    s_picker_window = window_create();
-    window_set_background_color(s_picker_window, GColorWhite);
-    window_set_click_config_provider(s_picker_window, picker_click_config_provider);
-    window_set_window_handlers(s_picker_window, (WindowHandlers) {
-      .load = picker_window_load,
-      .unload = picker_window_unload
-    });
+static void commit_edit_and_run(void) {
+  cancel_edit_timeout();
+  int32_t total = s_edit_min * 60 + s_edit_sec;
+  if (total != s_state.interval_seconds) {
+    apply_interval(total);
   }
-  if (!window_stack_contains_window(s_picker_window)) {
-    window_stack_push(s_picker_window, true);
-  }
+  s_mode = MODE_RUN;
+  apply_mode_layout();
 }
 
-static void select_click_handler(ClickRecognizerRef recognizer, void *context) {
-  if (s_state.running) {
-    pause_timer();
+static void up_click_handler(ClickRecognizerRef recognizer, void *context) {
+  if (s_mode == MODE_EDIT) {
+    if (s_edit_field == FIELD_MIN) {
+      s_edit_min = (s_edit_min + 1) % 100;
+    } else {
+      s_edit_sec = (s_edit_sec + SEC_STEP) % 60;
+    }
+    update_edit_display();
+    reset_edit_timeout();
   } else {
-    start_timer();
+    if (s_state.running) {
+      pause_timer();
+    } else {
+      start_timer();
+    }
+    update_button_labels();
   }
 }
 
 static void down_click_handler(ClickRecognizerRef recognizer, void *context) {
-  reset_timer();
+  if (s_mode == MODE_EDIT) {
+    if (s_edit_field == FIELD_MIN) {
+      s_edit_min = (s_edit_min + 99) % 100;
+    } else {
+      s_edit_sec = (s_edit_sec + (60 - SEC_STEP)) % 60;
+    }
+    update_edit_display();
+    reset_edit_timeout();
+  } else {
+    if (s_state.running || total_elapsed() > 0) {
+      reset_timer();
+    } else {
+      start_timer();
+    }
+    update_button_labels();
+  }
 }
 
-static void up_click_handler(ClickRecognizerRef recognizer, void *context) {
-  show_picker();
+static void center_click_handler(ClickRecognizerRef recognizer, void *context) {
+  if (s_mode == MODE_EDIT) {
+    if (s_edit_field == FIELD_MIN) {
+      s_edit_field = FIELD_SEC;
+      update_edit_display();
+      update_button_labels();
+      reset_edit_timeout();
+    } else {
+      commit_edit_and_run();
+    }
+  } else {
+    enter_edit_mode();
+  }
 }
 
-static void main_click_config_provider(void *context) {
-  window_single_click_subscribe(BUTTON_ID_SELECT, select_click_handler);
-  window_single_click_subscribe(BUTTON_ID_DOWN, down_click_handler);
+static void click_config_provider(void *context) {
   window_single_click_subscribe(BUTTON_ID_UP, up_click_handler);
+  window_single_click_subscribe(BUTTON_ID_SELECT, center_click_handler);
+  window_single_click_subscribe(BUTTON_ID_DOWN, down_click_handler);
+}
+
+static TextLayer *make_label(Layer *parent, GRect frame, GTextAlignment align, const char *font_key, GColor color) {
+  TextLayer *t = text_layer_create(frame);
+  text_layer_set_background_color(t, GColorClear);
+  text_layer_set_text_color(t, color);
+  text_layer_set_text_alignment(t, align);
+  text_layer_set_font(t, fonts_get_system_font(font_key));
+  layer_add_child(parent, text_layer_get_layer(t));
+  return t;
 }
 
 static void main_window_load(Window *window) {
@@ -706,76 +626,64 @@ static void main_window_load(Window *window) {
   layer_set_update_proc(s_fill_layer, fill_update_proc);
   layer_add_child(window_layer, s_fill_layer);
 
-  s_clock_layer = text_layer_create(GRect(0, 3, bounds.size.w, 20));
-  text_layer_set_background_color(s_clock_layer, GColorClear);
-  text_layer_set_text_color(s_clock_layer, color_ink());
-  text_layer_set_text_alignment(s_clock_layer, GTextAlignmentCenter);
-  text_layer_set_font(s_clock_layer, fonts_get_system_font(FONT_KEY_LECO_20_BOLD_NUMBERS));
-  layer_add_child(window_layer, text_layer_get_layer(s_clock_layer));
+  s_clock_layer = make_label(window_layer, GRect(0, 3, bounds.size.w, 20),
+                             GTextAlignmentCenter, FONT_KEY_LECO_20_BOLD_NUMBERS, color_ink());
+  s_status_layer = make_label(window_layer, GRect(0, 24, bounds.size.w, 20),
+                              GTextAlignmentCenter, FONT_KEY_GOTHIC_18_BOLD, color_accent());
 
-  s_status_layer = text_layer_create(GRect(0, 24, bounds.size.w, 20));
-  text_layer_set_background_color(s_status_layer, GColorClear);
-  text_layer_set_text_color(s_status_layer, color_accent());
-  text_layer_set_text_alignment(s_status_layer, GTextAlignmentCenter);
-  text_layer_set_font(s_status_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD));
-  layer_add_child(window_layer, text_layer_get_layer(s_status_layer));
+  s_c_min_layer = make_label(window_layer, GRect(s_min_x, s_center_y - 22, s_box_w, 44),
+                             GTextAlignmentCenter, FONT_KEY_LECO_42_NUMBERS, color_ink());
+  s_c_colon_layer = make_label(window_layer, GRect(s_colon_x - 10, s_center_y - 22, 20, 44),
+                               GTextAlignmentCenter, FONT_KEY_LECO_42_NUMBERS, color_ink());
+  s_c_sec_layer = make_label(window_layer, GRect(s_sec_x, s_center_y - 22, s_box_w, 44),
+                             GTextAlignmentCenter, FONT_KEY_LECO_42_NUMBERS, color_ink());
+  s_c_timer_layer = make_label(window_layer, GRect(0, s_center_y - 22, bounds.size.w, 44),
+                               GTextAlignmentCenter, FONT_KEY_LECO_42_NUMBERS, color_ink());
 
-  s_hero_layer = text_layer_create(GRect(0, s_center_y - 24, bounds.size.w, 48));
-  text_layer_set_background_color(s_hero_layer, GColorClear);
-  text_layer_set_text_color(s_hero_layer, color_ink());
-  text_layer_set_text_alignment(s_hero_layer, GTextAlignmentCenter);
-  text_layer_set_font(s_hero_layer, fonts_get_system_font(FONT_KEY_LECO_42_NUMBERS));
-  layer_add_child(window_layer, text_layer_get_layer(s_hero_layer));
-
-  s_next_layer = text_layer_create(GRect(0, s_center_y + 28, bounds.size.w, 20));
-  text_layer_set_background_color(s_next_layer, GColorClear);
-  text_layer_set_text_color(s_next_layer, color_next());
-  text_layer_set_text_alignment(s_next_layer, GTextAlignmentCenter);
-  text_layer_set_font(s_next_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD));
-  layer_add_child(window_layer, text_layer_get_layer(s_next_layer));
+  s_b_timer_layer = make_label(window_layer, GRect(0, bounds.size.h - 30, bounds.size.w, 20),
+                               GTextAlignmentCenter, FONT_KEY_LECO_20_BOLD_NUMBERS, color_accent());
+  s_b_interval_layer = make_label(window_layer, GRect(0, bounds.size.h - 30, bounds.size.w, 20),
+                                  GTextAlignmentCenter, FONT_KEY_LECO_20_BOLD_NUMBERS, color_accent());
 
   int16_t btn_x = bounds.size.w - 44;
-  s_btn_up_layer = text_layer_create(GRect(btn_x, 6, 40, 18));
-  text_layer_set_background_color(s_btn_up_layer, GColorClear);
-  text_layer_set_text_color(s_btn_up_layer, color_ink());
-  text_layer_set_text_alignment(s_btn_up_layer, GTextAlignmentRight);
-  text_layer_set_font(s_btn_up_layer, fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD));
-  layer_add_child(window_layer, text_layer_get_layer(s_btn_up_layer));
+  s_btn_up_layer = make_label(window_layer, GRect(btn_x, 6, 40, 18),
+                              GTextAlignmentRight, FONT_KEY_GOTHIC_14_BOLD, color_sub());
+  s_btn_center_layer = make_label(window_layer, GRect(btn_x, s_center_y - 9, 40, 18),
+                                  GTextAlignmentRight, FONT_KEY_GOTHIC_14_BOLD, color_sub());
+  s_btn_down_layer = make_label(window_layer, GRect(btn_x, bounds.size.h - 26, 40, 18),
+                                GTextAlignmentRight, FONT_KEY_GOTHIC_14_BOLD, color_sub());
 
-  s_btn_sel_layer = text_layer_create(GRect(btn_x, s_center_y - 9, 40, 18));
-  text_layer_set_background_color(s_btn_sel_layer, GColorClear);
-  text_layer_set_text_color(s_btn_sel_layer, color_ink());
-  text_layer_set_text_alignment(s_btn_sel_layer, GTextAlignmentRight);
-  text_layer_set_font(s_btn_sel_layer, fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD));
-  layer_add_child(window_layer, text_layer_get_layer(s_btn_sel_layer));
-
-  s_btn_down_layer = text_layer_create(GRect(btn_x, bounds.size.h - 26, 40, 18));
-  text_layer_set_background_color(s_btn_down_layer, GColorClear);
-  text_layer_set_text_color(s_btn_down_layer, color_ink());
-  text_layer_set_text_alignment(s_btn_down_layer, GTextAlignmentRight);
-  text_layer_set_font(s_btn_down_layer, fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD));
-  layer_add_child(window_layer, text_layer_get_layer(s_btn_down_layer));
-
-  window_set_click_config_provider(window, main_click_config_provider);
+  apply_mode_layout();
   update_ui();
+
+  window_set_click_config_provider(window, click_config_provider);
   schedule_ui_tick();
 }
 
 static void main_window_unload(Window *window) {
   cancel_ui_tick();
+  cancel_edit_timeout();
   text_layer_destroy(s_btn_down_layer);
-  text_layer_destroy(s_btn_sel_layer);
+  text_layer_destroy(s_btn_center_layer);
   text_layer_destroy(s_btn_up_layer);
-  text_layer_destroy(s_next_layer);
-  text_layer_destroy(s_hero_layer);
+  text_layer_destroy(s_b_interval_layer);
+  text_layer_destroy(s_b_timer_layer);
+  text_layer_destroy(s_c_timer_layer);
+  text_layer_destroy(s_c_sec_layer);
+  text_layer_destroy(s_c_colon_layer);
+  text_layer_destroy(s_c_min_layer);
   text_layer_destroy(s_status_layer);
   text_layer_destroy(s_clock_layer);
   layer_destroy(s_fill_layer);
   s_btn_down_layer = NULL;
-  s_btn_sel_layer = NULL;
+  s_btn_center_layer = NULL;
   s_btn_up_layer = NULL;
-  s_next_layer = NULL;
-  s_hero_layer = NULL;
+  s_b_interval_layer = NULL;
+  s_b_timer_layer = NULL;
+  s_c_timer_layer = NULL;
+  s_c_sec_layer = NULL;
+  s_c_colon_layer = NULL;
+  s_c_min_layer = NULL;
   s_status_layer = NULL;
   s_clock_layer = NULL;
   s_fill_layer = NULL;
@@ -805,22 +713,16 @@ static void notify_window_load(Window *window) {
   layer_set_update_proc(s_notify_canvas_layer, notify_canvas_update_proc);
   layer_add_child(window_layer, s_notify_canvas_layer);
 
-  s_notify_title_layer = text_layer_create(GRect(10, bounds.size.h / 2 - 44, bounds.size.w - 20, 24));
-  text_layer_set_background_color(s_notify_title_layer, GColorClear);
-  text_layer_set_text_color(s_notify_title_layer, color_ink());
-  text_layer_set_text_alignment(s_notify_title_layer, GTextAlignmentCenter);
-  text_layer_set_font(s_notify_title_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD));
+  s_notify_title_layer = make_label(window_layer,
+                                    GRect(10, bounds.size.h / 2 - 44, bounds.size.w - 20, 24),
+                                    GTextAlignmentCenter, FONT_KEY_GOTHIC_18_BOLD, color_ink());
   text_layer_set_text(s_notify_title_layer, "CountUpVibe");
-  layer_add_child(window_layer, text_layer_get_layer(s_notify_title_layer));
 
   format_elapsed(total_elapsed(), s_notify_elapsed_text, sizeof(s_notify_elapsed_text));
-  s_notify_elapsed_layer = text_layer_create(GRect(10, bounds.size.h / 2 - 14, bounds.size.w - 20, 48));
-  text_layer_set_background_color(s_notify_elapsed_layer, GColorClear);
-  text_layer_set_text_color(s_notify_elapsed_layer, color_ink());
-  text_layer_set_text_alignment(s_notify_elapsed_layer, GTextAlignmentCenter);
-  text_layer_set_font(s_notify_elapsed_layer, fonts_get_system_font(FONT_KEY_LECO_42_NUMBERS));
+  s_notify_elapsed_layer = make_label(window_layer,
+                                      GRect(10, bounds.size.h / 2 - 14, bounds.size.w - 20, 48),
+                                      GTextAlignmentCenter, FONT_KEY_LECO_42_NUMBERS, color_ink());
   text_layer_set_text(s_notify_elapsed_layer, s_notify_elapsed_text);
-  layer_add_child(window_layer, text_layer_get_layer(s_notify_elapsed_layer));
 
   s_notify_exit_timer = app_timer_register(4000, notify_exit_handler, NULL);
 }
@@ -865,6 +767,15 @@ static void init(void) {
     update_app_glance_safe();
   } else {
     cancel_pending_wakeup();
+    s_state.running = true;
+    s_state.run_started_epoch = now_seconds();
+    s_state.next_vibe_epoch = now_seconds() + s_state.interval_seconds;
+    s_frozen_cycle_elapsed = 0;
+    state_save();
+
+    s_mode = MODE_EDIT;
+    s_edit_field = FIELD_MIN;
+
     s_main_window = window_create();
     window_set_background_color(s_main_window, GColorWhite);
     window_set_window_handlers(s_main_window, (WindowHandlers) {
@@ -872,7 +783,8 @@ static void init(void) {
       .unload = main_window_unload
     });
     window_stack_push(s_main_window, true);
-    schedule_ui_tick();
+
+    enter_edit_mode();
     update_app_glance_safe();
   }
 }
@@ -886,9 +798,6 @@ static void deinit(void) {
   }
   if (s_notify_window) {
     window_destroy(s_notify_window);
-  }
-  if (s_picker_window) {
-    window_destroy(s_picker_window);
   }
   if (s_main_window) {
     window_destroy(s_main_window);
