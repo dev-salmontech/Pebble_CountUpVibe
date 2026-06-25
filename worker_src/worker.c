@@ -1,5 +1,6 @@
-#include <pebble.h>
 #include <pebble_worker.h>
+
+extern void vibes_short_pulse(void);
 
 #define DEFAULT_INTERVAL_SECONDS (5 * 60)
 #define MIN_INTERVAL_SECONDS (1 * 60)
