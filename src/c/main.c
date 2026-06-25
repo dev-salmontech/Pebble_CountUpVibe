@@ -372,7 +372,7 @@ static void fire_vibe(void) {
     return;
   }
 
-  vibes_enqueue_custom_pattern(&s_vibe_pattern);
+  vibes_enqueue_custom_pattern(s_vibe_pattern);
   s_state.vibe_count += 1;
   s_state.next_vibe_epoch = now + s_state.interval_seconds;
   state_save();
@@ -464,8 +464,8 @@ static void popup_anim_handler(void *context) {
 
 static void popup_dismiss_handler(void *context) {
   s_popup_dismiss_timer = NULL;
-  if (s_popup_window) {
-    window_stack_remove_from_stack(s_popup_window);
+  if (s_popup_window && window_stack_contains_window(s_popup_window)) {
+    window_stack_pop(true);
   }
 }
 
@@ -515,8 +515,8 @@ static void popup_click_handler(ClickRecognizerRef recognizer, void *context) {
     app_timer_cancel(s_popup_dismiss_timer);
     s_popup_dismiss_timer = NULL;
   }
-  if (s_popup_window) {
-    window_stack_remove_from_stack(s_popup_window);
+  if (s_popup_window && window_stack_contains_window(s_popup_window)) {
+    window_stack_pop(true);
   }
 }
 
@@ -578,22 +578,21 @@ static void popup_window_unload(Window *window) {
   s_popup_title_layer = NULL;
   s_popup_sub_layer = NULL;
   s_popup_canvas_layer = NULL;
-  s_popup_window = NULL;
 }
 
 static void show_popup(void) {
-  if (s_popup_window) {
-    return;
+  if (!s_popup_window) {
+    s_popup_window = window_create();
+    window_set_background_color(s_popup_window, color_bg());
+    window_set_click_config_provider(s_popup_window, popup_click_config_provider);
+    window_set_window_handlers(s_popup_window, (WindowHandlers) {
+      .load = popup_window_load,
+      .unload = popup_window_unload
+    });
   }
-  s_popup_window = window_create();
-  window_set_background_color(s_popup_window, color_bg());
-  window_set_fullscreen(s_popup_window, true);
-  window_set_click_config_provider(s_popup_window, popup_click_config_provider);
-  window_set_window_handlers(s_popup_window, (WindowHandlers) {
-    .load = popup_window_load,
-    .unload = popup_window_unload
-  });
-  window_stack_push(s_popup_window, true);
+  if (!window_stack_contains_window(s_popup_window)) {
+    window_stack_push(s_popup_window, true);
+  }
 }
 
 typedef struct {
@@ -788,7 +787,9 @@ static void show_picker(void) {
       .unload = picker_window_unload
     });
   }
-  window_stack_push(s_picker_window, true);
+  if (!window_stack_contains_window(s_picker_window)) {
+    window_stack_push(s_picker_window, true);
+  }
 }
 
 static void select_click_handler(ClickRecognizerRef recognizer, void *context) {
@@ -917,8 +918,11 @@ static void deinit(void) {
   if (s_state.running) {
     schedule_wakeup_for_next();
   }
+  while (window_stack_get_top_window() && window_stack_get_top_window() != s_main_window) {
+    window_stack_pop(false);
+  }
   if (s_popup_window) {
-    window_stack_remove_from_stack(s_popup_window);
+    window_destroy(s_popup_window);
   }
   if (s_picker_window) {
     window_destroy(s_picker_window);
