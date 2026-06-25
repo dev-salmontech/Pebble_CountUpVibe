@@ -34,6 +34,7 @@ typedef struct {
 
 static Window *s_main_window;
 static Layer *s_fill_layer;
+static Layer *s_edit_box_layer;
 static TextLayer *s_clock_layer;
 static TextLayer *s_status_layer;
 static TextLayer *s_c_min_layer;
@@ -105,6 +106,11 @@ static int32_t clamp_interval(int32_t interval_seconds) {
 
 static int32_t now_seconds(void) {
   return (int32_t)time(NULL);
+}
+
+static int32_t next_vibe_after(int32_t t) {
+  int32_t interval = s_state.interval_seconds > 0 ? s_state.interval_seconds : 1;
+  return ((t / interval) + 1) * interval;
 }
 
 static int32_t total_elapsed(void) {
@@ -197,7 +203,7 @@ static void state_load_or_default(void) {
     s_state.elapsed_accum = 0;
     s_state.run_started_epoch = now_seconds();
     s_state.interval_seconds = DEFAULT_INTERVAL_SECONDS;
-    s_state.next_vibe_epoch = now_seconds() + DEFAULT_INTERVAL_SECONDS;
+    s_state.next_vibe_epoch = next_vibe_after(now_seconds());
     s_state.vibe_count = 0;
     s_frozen_cycle_elapsed = 0;
     state_save();
@@ -278,7 +284,12 @@ static int16_t compute_live_fill_height(int16_t h) {
   if (elapsed_in_cycle > interval) {
     elapsed_in_cycle = interval;
   }
-  return (int16_t)((elapsed_in_cycle * h) / interval);
+  int32_t denom = (interval > 1) ? (interval - 1) : 1;
+  int32_t fh = (elapsed_in_cycle * h) / denom;
+  if (fh > h) {
+    fh = h;
+  }
+  return (int16_t)fh;
 }
 
 static int16_t compute_fill_height(int16_t h) {
@@ -297,17 +308,24 @@ static void fill_update_proc(Layer *layer, GContext *ctx) {
   GRect fill = GRect(0, bounds.size.h - fill_h, bounds.size.w, fill_h);
   graphics_fill_rect(ctx, fill, 0, GCornerNone);
 
-  if (s_mode == MODE_EDIT) {
-    int16_t bx = (s_edit_field == FIELD_MIN) ? s_min_x : s_sec_x;
-    GRect box = GRect(bx, s_center_y - 22, s_box_w, 44);
-    graphics_context_set_fill_color(ctx, GColorBlack);
-    graphics_fill_rect(ctx, box, 6, GCornersAll);
-  }
-
   if (s_back_arrow) {
     graphics_context_set_fill_color(ctx, GColorBlack);
     gpath_draw_filled(ctx, s_back_arrow);
   }
+}
+
+static void edit_box_update_proc(Layer *layer, GContext *ctx) {
+  GRect bounds = layer_get_bounds(layer);
+  graphics_context_set_fill_color(ctx, GColorBlack);
+  graphics_fill_rect(ctx, bounds, 6, GCornersAll);
+}
+
+static void set_edit_box_position(void) {
+  if (!s_edit_box_layer) {
+    return;
+  }
+  int x = (s_edit_field == FIELD_MIN) ? s_min_x : s_sec_x;
+  layer_set_frame(s_edit_box_layer, GRect(x, s_center_y - 22, s_box_w, 44));
 }
 
 static void update_clock_text(void) {
@@ -337,9 +355,6 @@ static void update_edit_display(void) {
   if (s_c_sec_layer) {
     text_layer_set_background_color(s_c_sec_layer, GColorClear);
     text_layer_set_text_color(s_c_sec_layer, !min_active ? GColorWhite : color_ink());
-  }
-  if (s_fill_layer) {
-    layer_mark_dirty(s_fill_layer);
   }
 }
 
@@ -386,6 +401,10 @@ static void apply_mode_layout(void) {
   }
   if (s_b_interval_layer) {
     layer_set_hidden(text_layer_get_layer(s_b_interval_layer), edit);
+  }
+  if (s_edit_box_layer) {
+    layer_set_hidden(s_edit_box_layer, !edit);
+    set_edit_box_position();
   }
   update_edit_display();
   update_button_labels();
@@ -446,7 +465,7 @@ static void fire_vibe(void) {
 
   vibes_enqueue_custom_pattern(s_vibe_pattern);
   s_state.vibe_count += 1;
-  s_state.next_vibe_epoch = now + s_state.interval_seconds;
+  s_state.next_vibe_epoch = next_vibe_after(now);
   state_save();
   update_app_glance_safe();
 }
@@ -477,11 +496,8 @@ static void start_timer(void) {
   s_state.elapsed_accum = total_elapsed();
   s_state.running = true;
   s_state.run_started_epoch = now_seconds();
-  int32_t remaining = s_state.interval_seconds - s_frozen_cycle_elapsed;
-  if (remaining < 1) {
-    remaining = s_state.interval_seconds;
-  }
-  s_state.next_vibe_epoch = now_seconds() + remaining;
+  s_state.next_vibe_epoch = next_vibe_after(now_seconds());
+  s_frozen_cycle_elapsed = 0;
   state_save();
   cancel_ui_tick();
   schedule_ui_tick();
@@ -523,7 +539,7 @@ static void reset_timer(void) {
 static void apply_interval(int32_t total_seconds) {
   s_state.interval_seconds = clamp_interval(total_seconds);
   if (s_state.running) {
-    s_state.next_vibe_epoch = now_seconds() + s_state.interval_seconds;
+    s_state.next_vibe_epoch = next_vibe_after(now_seconds());
   }
   state_save();
   update_app_glance_safe();
@@ -618,6 +634,7 @@ static void center_click_handler(ClickRecognizerRef recognizer, void *context) {
     if (s_edit_field == FIELD_MIN) {
       s_edit_field = FIELD_SEC;
       update_edit_display();
+      set_edit_box_position();
       update_button_labels();
       reset_edit_timeout();
     } else {
@@ -656,6 +673,10 @@ static void main_window_load(Window *window) {
   s_fill_layer = layer_create(bounds);
   layer_set_update_proc(s_fill_layer, fill_update_proc);
   layer_add_child(window_layer, s_fill_layer);
+
+  s_edit_box_layer = layer_create(GRect(s_min_x, s_center_y - 22, s_box_w, 44));
+  layer_set_update_proc(s_edit_box_layer, edit_box_update_proc);
+  layer_add_child(window_layer, s_edit_box_layer);
 
   s_clock_layer = make_label(window_layer, GRect(0, 3, bounds.size.w, 20),
                              GTextAlignmentCenter, FONT_KEY_LECO_20_BOLD_NUMBERS, color_ink());
@@ -706,6 +727,10 @@ static void main_window_unload(Window *window) {
   text_layer_destroy(s_status_layer);
   text_layer_destroy(s_clock_layer);
   layer_destroy(s_fill_layer);
+  if (s_edit_box_layer) {
+    layer_destroy(s_edit_box_layer);
+    s_edit_box_layer = NULL;
+  }
   if (s_back_arrow) {
     gpath_destroy(s_back_arrow);
     s_back_arrow = NULL;
@@ -768,7 +793,7 @@ static void init(void) {
     } else {
       s_state.running = true;
       if (s_state.next_vibe_epoch <= now_seconds()) {
-        s_state.next_vibe_epoch = now_seconds() + s_state.interval_seconds;
+        s_state.next_vibe_epoch = next_vibe_after(now_seconds());
       }
       s_frozen_cycle_elapsed = 0;
       state_save();
