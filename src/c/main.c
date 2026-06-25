@@ -58,10 +58,8 @@ static int s_min_x;
 static int s_sec_x;
 static int s_colon_x;
 static int s_box_w;
-static int s_box_h;
 static int s_screen_h;
 static int16_t s_edit_freeze_h;
-static GPath *s_back_arrow;
 static GFont s_font_big;
 
 static char s_clock_text[16];
@@ -259,17 +257,93 @@ static GColor color_ink(void) {
 static void compute_layout(GRect bounds) {
   s_center_y = bounds.size.h / 2 + 4;
   s_screen_h = bounds.size.h;
-  s_box_w = 34;
-  s_box_h = 34;
-  int16_t row_w = s_box_w * 2 + 20;
-  int16_t content_w = bounds.size.w - 44;
-  int16_t row_left = (content_w - row_w) / 2;
-  if (row_left < 0) {
-    row_left = 0;
-  }
+  s_box_w = 46;
+  int16_t row_w = s_box_w * 2 + 30;
+  int16_t row_left = (bounds.size.w - row_w) / 2;
   s_min_x = row_left;
-  s_colon_x = row_left + s_box_w + 10;
-  s_sec_x = row_left + s_box_w + 20;
+  s_colon_x = row_left + s_box_w + 15;
+  s_sec_x = row_left + s_box_w + 30;
+}
+
+static void draw_up_arrow(GContext *ctx, GPoint c) {
+  graphics_draw_line(ctx, GPoint(c.x, c.y - 8), GPoint(c.x, c.y + 8));
+  graphics_draw_line(ctx, GPoint(c.x, c.y - 8), GPoint(c.x - 6, c.y - 2));
+  graphics_draw_line(ctx, GPoint(c.x, c.y - 8), GPoint(c.x + 6, c.y - 2));
+}
+
+static void draw_down_arrow(GContext *ctx, GPoint c) {
+  graphics_draw_line(ctx, GPoint(c.x, c.y - 8), GPoint(c.x, c.y + 8));
+  graphics_draw_line(ctx, GPoint(c.x, c.y + 8), GPoint(c.x - 6, c.y + 2));
+  graphics_draw_line(ctx, GPoint(c.x, c.y + 8), GPoint(c.x + 6, c.y + 2));
+}
+
+static void draw_play_icon(GContext *ctx, GPoint c) {
+  GPoint points[3] = { GPoint(c.x - 5, c.y - 8), GPoint(c.x - 5, c.y + 8), GPoint(c.x + 8, c.y) };
+  GPathInfo info = { .num_points = 3, .points = points };
+  GPath *path = gpath_create(&info);
+  gpath_draw_filled(ctx, path);
+  gpath_destroy(path);
+}
+
+static void draw_pause_icon(GContext *ctx, GPoint c) {
+  graphics_fill_rect(ctx, GRect(c.x - 7, c.y - 8, 5, 16), 0, GCornerNone);
+  graphics_fill_rect(ctx, GRect(c.x + 2, c.y - 8, 5, 16), 0, GCornerNone);
+}
+
+static void draw_check_icon(GContext *ctx, GPoint c) {
+  graphics_draw_line(ctx, GPoint(c.x - 8, c.y), GPoint(c.x - 2, c.y + 7));
+  graphics_draw_line(ctx, GPoint(c.x - 2, c.y + 7), GPoint(c.x + 9, c.y - 8));
+}
+
+static void draw_reset_icon(GContext *ctx, GPoint c) {
+  graphics_draw_circle(ctx, c, 8);
+  graphics_draw_line(ctx, GPoint(c.x - 8, c.y - 1), GPoint(c.x - 12, c.y - 6));
+  graphics_draw_line(ctx, GPoint(c.x - 8, c.y - 1), GPoint(c.x - 2, c.y - 5));
+}
+
+static void draw_spanner_icon(GContext *ctx, GPoint c) {
+  graphics_draw_line(ctx, GPoint(c.x - 8, c.y + 8), GPoint(c.x + 5, c.y - 5));
+  graphics_draw_circle(ctx, GPoint(c.x + 6, c.y - 6), 4);
+  graphics_fill_circle(ctx, GPoint(c.x - 8, c.y + 8), 3);
+}
+
+static void draw_door_icon(GContext *ctx, GPoint c) {
+  graphics_draw_rect(ctx, GRect(c.x - 7, c.y - 9, 12, 18));
+  graphics_draw_line(ctx, GPoint(c.x - 5, c.y - 7), GPoint(c.x + 8, c.y - 10));
+  graphics_draw_line(ctx, GPoint(c.x + 8, c.y - 10), GPoint(c.x + 8, c.y + 10));
+  graphics_draw_line(ctx, GPoint(c.x + 8, c.y + 10), GPoint(c.x - 5, c.y + 7));
+  graphics_fill_rect(ctx, GRect(c.x + 4, c.y, 2, 2), 0, GCornerNone);
+}
+
+static void draw_button_symbols(GContext *ctx, GRect bounds) {
+  graphics_context_set_fill_color(ctx, GColorBlack);
+  graphics_context_set_stroke_color(ctx, GColorBlack);
+  graphics_context_set_stroke_width(ctx, 2);
+
+  int16_t x = bounds.size.w - 10;
+  if (s_mode == MODE_EDIT) {
+    draw_up_arrow(ctx, GPoint(x, 15));
+    if (s_edit_field == FIELD_MIN) {
+      draw_spanner_icon(ctx, GPoint(x, s_center_y));
+    } else {
+      draw_check_icon(ctx, GPoint(x, s_center_y));
+    }
+    draw_down_arrow(ctx, GPoint(x, bounds.size.h - 17));
+  } else {
+    if (s_state.running) {
+      draw_pause_icon(ctx, GPoint(x, 15));
+    } else {
+      draw_play_icon(ctx, GPoint(x, 15));
+    }
+    draw_spanner_icon(ctx, GPoint(x, s_center_y));
+    if (s_state.running || total_elapsed() > 0) {
+      draw_reset_icon(ctx, GPoint(x, bounds.size.h - 17));
+    } else {
+      draw_play_icon(ctx, GPoint(x, bounds.size.h - 17));
+    }
+  }
+
+  draw_door_icon(ctx, GPoint(8, s_center_y));
 }
 
 static int16_t compute_live_fill_height(int16_t h) {
@@ -314,22 +388,18 @@ static void fill_update_proc(Layer *layer, GContext *ctx) {
   GRect fill = GRect(0, bounds.size.h - fill_h, bounds.size.w, fill_h);
   graphics_fill_rect(ctx, fill, 0, GCornerNone);
 
-  if (s_back_arrow) {
-    graphics_context_set_fill_color(ctx, GColorBlack);
-    gpath_draw_filled(ctx, s_back_arrow);
-  }
+  draw_button_symbols(ctx, bounds);
 
   if (s_mode == MODE_EDIT && s_font_big) {
     int16_t cy = s_center_y;
     int16_t bx = (s_edit_field == FIELD_MIN) ? s_min_x : s_sec_x;
-    int16_t top = cy - s_box_h / 2;
-    GRect box = GRect(bx, top, s_box_w, s_box_h);
+    GRect box = GRect(bx, cy - 22, s_box_w, 44);
     graphics_context_set_fill_color(ctx, GColorBlack);
     graphics_fill_rect(ctx, box, 6, GCornersAll);
 
-    GRect min_rect = GRect(s_min_x, top, s_box_w, s_box_h);
-    GRect col_rect = GRect(s_colon_x - 8, top, 16, s_box_h);
-    GRect sec_rect = GRect(s_sec_x, top, s_box_w, s_box_h);
+    GRect min_rect = GRect(s_min_x, cy - 22, s_box_w, 44);
+    GRect col_rect = GRect(s_colon_x - 10, cy - 22, 20, 44);
+    GRect sec_rect = GRect(s_sec_x, cy - 22, s_box_w, 44);
 
     graphics_context_set_text_color(ctx, (s_edit_field == FIELD_MIN) ? GColorWhite : color_ink());
     graphics_draw_text(ctx, s_min_buf, s_font_big, min_rect, GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
@@ -355,17 +425,9 @@ static void update_edit_display(void) {
 }
 
 static void update_button_labels(void) {
-  if (s_mode == MODE_EDIT) {
-    snprintf(s_btn_up_text, sizeof(s_btn_up_text), "UP");
-    snprintf(s_btn_center_text, sizeof(s_btn_center_text),
-             s_edit_field == FIELD_MIN ? "SET" : "APPLY");
-    snprintf(s_btn_down_text, sizeof(s_btn_down_text), "DOWN");
-  } else {
-    snprintf(s_btn_up_text, sizeof(s_btn_up_text), s_state.running ? "PAUSE" : "RESUME");
-    snprintf(s_btn_center_text, sizeof(s_btn_center_text), "SET");
-    snprintf(s_btn_down_text, sizeof(s_btn_down_text),
-             (s_state.running || total_elapsed() > 0) ? "RESET" : "START");
-  }
+  s_btn_up_text[0] = '\0';
+  s_btn_center_text[0] = '\0';
+  s_btn_down_text[0] = '\0';
 
   if (s_btn_up_layer) {
     text_layer_set_text(s_btn_up_layer, s_btn_up_text);
@@ -375,6 +437,9 @@ static void update_button_labels(void) {
   }
   if (s_btn_down_layer) {
     text_layer_set_text(s_btn_down_layer, s_btn_down_text);
+  }
+  if (s_fill_layer) {
+    layer_mark_dirty(s_fill_layer);
   }
 }
 
@@ -655,11 +720,7 @@ static void main_window_load(Window *window) {
   GRect bounds = layer_get_bounds(window_layer);
   compute_layout(bounds);
 
-  GPoint arrow_pts[3] = { GPoint(3, s_center_y), GPoint(13, s_center_y - 7), GPoint(13, s_center_y + 7) };
-  GPathInfo arrow_info = { .num_points = 3, .points = arrow_pts };
-  s_back_arrow = gpath_create(&arrow_info);
-
-  s_font_big = fonts_get_system_font(FONT_KEY_LECO_26_BOLD_NUMBERS_AM_PM);
+  s_font_big = fonts_get_system_font(FONT_KEY_LECO_42_NUMBERS);
 
   s_fill_layer = layer_create(bounds);
   layer_set_update_proc(s_fill_layer, fill_update_proc);
@@ -705,10 +766,6 @@ static void main_window_unload(Window *window) {
   text_layer_destroy(s_status_layer);
   text_layer_destroy(s_clock_layer);
   layer_destroy(s_fill_layer);
-  if (s_back_arrow) {
-    gpath_destroy(s_back_arrow);
-    s_back_arrow = NULL;
-  }
   s_btn_down_layer = NULL;
   s_btn_center_layer = NULL;
   s_btn_up_layer = NULL;
