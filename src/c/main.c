@@ -1,4 +1,5 @@
 #include <pebble.h>
+#include <string.h>
 
 #define DEFAULT_INTERVAL_SECONDS (5 * 60)
 #define MIN_INTERVAL_SECONDS 10
@@ -76,6 +77,10 @@ static char s_btn_center_text[16];
 static char s_btn_down_text[16];
 static char s_glance_text[96];
 static char s_notify_elapsed_text[16];
+static char s_last_clock[16];
+static char s_last_status[16];
+static char s_last_interval[12];
+static int s_last_fill_h = -1;
 
 static const uint32_t s_vibe_durations[] = { 150, 90, 320 };
 static const VibePattern s_vibe_pattern = {
@@ -267,12 +272,7 @@ static void compute_layout(GRect bounds) {
   s_sec_x = row_left + s_box_w + 30;
 }
 
-static void fill_update_proc(Layer *layer, GContext *ctx) {
-  GRect bounds = layer_get_bounds(layer);
-
-  graphics_context_set_fill_color(ctx, GColorWhite);
-  graphics_fill_rect(ctx, bounds, 0, GCornerNone);
-
+static int16_t compute_fill_height(int16_t h) {
   int32_t interval = s_state.interval_seconds > 0 ? s_state.interval_seconds : 1;
   int32_t elapsed_in_cycle;
   if (s_state.running) {
@@ -290,8 +290,14 @@ static void fill_update_proc(Layer *layer, GContext *ctx) {
   if (elapsed_in_cycle > interval) {
     elapsed_in_cycle = interval;
   }
-  int16_t fill_h = (int16_t)((elapsed_in_cycle * bounds.size.h) / interval);
+  return (int16_t)((elapsed_in_cycle * h) / interval);
+}
 
+static void fill_update_proc(Layer *layer, GContext *ctx) {
+  GRect bounds = layer_get_bounds(layer);
+  graphics_context_set_fill_color(ctx, GColorWhite);
+  graphics_fill_rect(ctx, bounds, 0, GCornerNone);
+  int16_t fill_h = compute_fill_height(bounds.size.h);
   graphics_context_set_fill_color(ctx, color_water());
   GRect fill = GRect(0, bounds.size.h - fill_h, bounds.size.w, fill_h);
   graphics_fill_rect(ctx, fill, 0, GCornerNone);
@@ -389,24 +395,32 @@ static void update_ui(void) {
   format_elapsed(total_elapsed(), s_timer_text, sizeof(s_timer_text));
   format_mmss(s_state.interval_seconds, s_interval_text, sizeof(s_interval_text));
 
-  if (s_clock_layer) {
+  if (s_clock_layer && strcmp(s_clock_text, s_last_clock) != 0) {
     text_layer_set_text(s_clock_layer, s_clock_text);
+    strcpy(s_last_clock, s_clock_text);
   }
-  if (s_status_layer) {
+  if (s_status_layer && strcmp(s_status_text, s_last_status) != 0) {
     text_layer_set_text(s_status_layer, s_status_text);
+    strcpy(s_last_status, s_status_text);
   }
-  if (s_c_timer_layer) {
+  if (s_mode == MODE_RUN && s_c_timer_layer) {
     text_layer_set_text(s_c_timer_layer, s_timer_text);
   }
-  if (s_b_timer_layer) {
+  if (s_mode == MODE_EDIT && s_b_timer_layer) {
     text_layer_set_text(s_b_timer_layer, s_timer_text);
   }
-  if (s_b_interval_layer) {
+  if (s_b_interval_layer && strcmp(s_interval_text, s_last_interval) != 0) {
     text_layer_set_text(s_b_interval_layer, s_interval_text);
+    strcpy(s_last_interval, s_interval_text);
   }
-  update_edit_display();
+
   if (s_fill_layer) {
-    layer_mark_dirty(s_fill_layer);
+    GRect fb = layer_get_bounds(s_fill_layer);
+    int16_t fh = compute_fill_height(fb.size.h);
+    if (fh != s_last_fill_h) {
+      s_last_fill_h = fh;
+      layer_mark_dirty(s_fill_layer);
+    }
   }
 }
 
@@ -640,10 +654,10 @@ static void main_window_load(Window *window) {
   s_c_timer_layer = make_label(window_layer, GRect(0, s_center_y - 22, bounds.size.w, 44),
                                GTextAlignmentCenter, FONT_KEY_LECO_42_NUMBERS, color_ink());
 
-  s_b_timer_layer = make_label(window_layer, GRect(0, bounds.size.h - 30, bounds.size.w, 20),
-                               GTextAlignmentCenter, FONT_KEY_LECO_20_BOLD_NUMBERS, color_accent());
-  s_b_interval_layer = make_label(window_layer, GRect(0, bounds.size.h - 30, bounds.size.w, 20),
-                                  GTextAlignmentCenter, FONT_KEY_LECO_20_BOLD_NUMBERS, color_accent());
+  s_b_timer_layer = make_label(window_layer, GRect(0, bounds.size.h - 32, bounds.size.w, 26),
+                               GTextAlignmentCenter, FONT_KEY_LECO_26_BOLD_NUMBERS_AM_PM, color_accent());
+  s_b_interval_layer = make_label(window_layer, GRect(0, bounds.size.h - 32, bounds.size.w, 26),
+                                  GTextAlignmentCenter, FONT_KEY_LECO_26_BOLD_NUMBERS_AM_PM, color_accent());
 
   int16_t btn_x = bounds.size.w - 44;
   s_btn_up_layer = make_label(window_layer, GRect(btn_x, 6, 40, 18),
