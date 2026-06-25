@@ -33,9 +33,7 @@ typedef struct {
 } TimerState;
 
 static Window *s_main_window;
-static Window *s_notify_window;
 static Layer *s_fill_layer;
-static Layer *s_notify_canvas_layer;
 static TextLayer *s_clock_layer;
 static TextLayer *s_status_layer;
 static TextLayer *s_c_min_layer;
@@ -47,10 +45,7 @@ static TextLayer *s_b_interval_layer;
 static TextLayer *s_btn_up_layer;
 static TextLayer *s_btn_center_layer;
 static TextLayer *s_btn_down_layer;
-static TextLayer *s_notify_title_layer;
-static TextLayer *s_notify_elapsed_layer;
 static AppTimer *s_ui_timer;
-static AppTimer *s_notify_exit_timer;
 static AppTimer *s_edit_timeout;
 static TimerState s_state;
 static bool s_launched_by_wakeup;
@@ -67,6 +62,7 @@ static int s_colon_x;
 static int s_box_w;
 static int s_screen_h;
 static int16_t s_edit_freeze_h;
+static GPath *s_back_arrow;
 
 static char s_clock_text[16];
 static char s_status_text[16];
@@ -78,7 +74,6 @@ static char s_btn_up_text[16];
 static char s_btn_center_text[16];
 static char s_btn_down_text[16];
 static char s_glance_text[96];
-static char s_notify_elapsed_text[16];
 static char s_last_clock[16];
 static char s_last_status[16];
 static char s_last_interval[12];
@@ -307,6 +302,11 @@ static void fill_update_proc(Layer *layer, GContext *ctx) {
     GRect box = GRect(bx, s_center_y - 22, s_box_w, 44);
     graphics_context_set_fill_color(ctx, GColorBlack);
     graphics_fill_rect(ctx, box, 6, GCornersAll);
+  }
+
+  if (s_back_arrow) {
+    graphics_context_set_fill_color(ctx, GColorBlack);
+    gpath_draw_filled(ctx, s_back_arrow);
   }
 }
 
@@ -649,6 +649,10 @@ static void main_window_load(Window *window) {
   GRect bounds = layer_get_bounds(window_layer);
   compute_layout(bounds);
 
+  GPoint arrow_pts[3] = { GPoint(3, s_center_y), GPoint(13, s_center_y - 7), GPoint(13, s_center_y + 7) };
+  GPathInfo arrow_info = { .num_points = 3, .points = arrow_pts };
+  s_back_arrow = gpath_create(&arrow_info);
+
   s_fill_layer = layer_create(bounds);
   layer_set_update_proc(s_fill_layer, fill_update_proc);
   layer_add_child(window_layer, s_fill_layer);
@@ -702,6 +706,10 @@ static void main_window_unload(Window *window) {
   text_layer_destroy(s_status_layer);
   text_layer_destroy(s_clock_layer);
   layer_destroy(s_fill_layer);
+  if (s_back_arrow) {
+    gpath_destroy(s_back_arrow);
+    s_back_arrow = NULL;
+  }
   s_btn_down_layer = NULL;
   s_btn_center_layer = NULL;
   s_btn_up_layer = NULL;
@@ -716,59 +724,18 @@ static void main_window_unload(Window *window) {
   s_fill_layer = NULL;
 }
 
-static void notify_canvas_update_proc(Layer *layer, GContext *ctx) {
-  GRect bounds = layer_get_bounds(layer);
-  graphics_context_set_fill_color(ctx, GColorBlack);
-  graphics_fill_rect(ctx, bounds, 0, GCornerNone);
-
-  int16_t card_h = 104;
-  GRect card = GRect(10, bounds.size.h / 2 - card_h / 2, bounds.size.w - 20, card_h);
-  graphics_context_set_fill_color(ctx, GColorWhite);
-  graphics_fill_rect(ctx, card, 8, GCornersAll);
-}
-
-static void notify_exit_handler(void *context) {
-  s_notify_exit_timer = NULL;
-  window_stack_pop_all(true);
-}
-
-static void notify_window_load(Window *window) {
-  Layer *window_layer = window_get_root_layer(window);
-  GRect bounds = layer_get_bounds(window_layer);
-
-  s_notify_canvas_layer = layer_create(bounds);
-  layer_set_update_proc(s_notify_canvas_layer, notify_canvas_update_proc);
-  layer_add_child(window_layer, s_notify_canvas_layer);
-
-  s_notify_title_layer = make_label(window_layer,
-                                    GRect(10, bounds.size.h / 2 - 44, bounds.size.w - 20, 24),
-                                    GTextAlignmentCenter, FONT_KEY_GOTHIC_18_BOLD, color_ink());
-  text_layer_set_text(s_notify_title_layer, "CountUpVibe");
-
-  format_elapsed(total_elapsed(), s_notify_elapsed_text, sizeof(s_notify_elapsed_text));
-  s_notify_elapsed_layer = make_label(window_layer,
-                                      GRect(10, bounds.size.h / 2 - 14, bounds.size.w - 20, 48),
-                                      GTextAlignmentCenter, FONT_KEY_LECO_42_NUMBERS, color_ink());
-  text_layer_set_text(s_notify_elapsed_layer, s_notify_elapsed_text);
-
-  s_notify_exit_timer = app_timer_register(4000, notify_exit_handler, NULL);
-}
-
-static void notify_window_unload(Window *window) {
-  if (s_notify_exit_timer) {
-    app_timer_cancel(s_notify_exit_timer);
-    s_notify_exit_timer = NULL;
-  }
-  text_layer_destroy(s_notify_title_layer);
-  text_layer_destroy(s_notify_elapsed_layer);
-  layer_destroy(s_notify_canvas_layer);
-  s_notify_title_layer = NULL;
-  s_notify_elapsed_layer = NULL;
-  s_notify_canvas_layer = NULL;
-}
-
 static void wakeup_handler(WakeupId id, int32_t cookie) {
   fire_vibe();
+}
+
+static void push_main_window(void) {
+  s_main_window = window_create();
+  window_set_background_color(s_main_window, GColorWhite);
+  window_set_window_handlers(s_main_window, (WindowHandlers) {
+    .load = main_window_load,
+    .unload = main_window_unload
+  });
+  window_stack_push(s_main_window, true);
 }
 
 static void init(void) {
@@ -783,35 +750,33 @@ static void init(void) {
     int32_t cookie = 0;
     wakeup_get_launch_event(&id, &cookie);
     fire_vibe();
-    s_notify_window = window_create();
-    window_set_background_color(s_notify_window, GColorBlack);
-    window_set_window_handlers(s_notify_window, (WindowHandlers) {
-      .load = notify_window_load,
-      .unload = notify_window_unload
-    });
-    window_stack_push(s_notify_window, true);
+    s_mode = MODE_RUN;
+    s_edit_field = FIELD_MIN;
+    push_main_window();
+    schedule_ui_tick();
     update_app_glance_safe();
   } else {
     cancel_pending_wakeup();
-    s_state.running = true;
-    s_state.run_started_epoch = now_seconds();
-    s_state.next_vibe_epoch = now_seconds() + s_state.interval_seconds;
-    s_frozen_cycle_elapsed = 0;
-    state_save();
-
-    s_mode = MODE_EDIT;
+    bool resume_paused = persist_exists(PERSIST_INITIALIZED) &&
+                         !s_state.running && s_state.elapsed_accum > 0;
     s_edit_field = FIELD_MIN;
-
-    s_main_window = window_create();
-    window_set_background_color(s_main_window, GColorWhite);
-    window_set_window_handlers(s_main_window, (WindowHandlers) {
-      .load = main_window_load,
-      .unload = main_window_unload
-    });
-    window_stack_push(s_main_window, true);
-
-    enter_edit_mode();
-    update_app_glance_safe();
+    if (resume_paused) {
+      s_mode = MODE_RUN;
+      push_main_window();
+      schedule_ui_tick();
+      update_app_glance_safe();
+    } else {
+      s_state.running = true;
+      if (s_state.next_vibe_epoch <= now_seconds()) {
+        s_state.next_vibe_epoch = now_seconds() + s_state.interval_seconds;
+      }
+      s_frozen_cycle_elapsed = 0;
+      state_save();
+      s_mode = MODE_EDIT;
+      push_main_window();
+      enter_edit_mode();
+      update_app_glance_safe();
+    }
   }
 }
 
@@ -821,9 +786,6 @@ static void deinit(void) {
   }
   while (window_stack_get_top_window() && window_stack_get_top_window() != s_main_window) {
     window_stack_pop(false);
-  }
-  if (s_notify_window) {
-    window_destroy(s_notify_window);
   }
   if (s_main_window) {
     window_destroy(s_main_window);
