@@ -253,14 +253,6 @@ static GColor color_water(void) {
 static GColor color_ink(void) {
   return GColorBlack;
 }
-static GColor color_accent(void) {
-#ifdef PBL_COLOR
-  return GColorFromHEX(0x0A64C8);
-#else
-  return GColorBlack;
-#endif
-}
-
 static void compute_layout(GRect bounds) {
   s_center_y = bounds.size.h / 2 + 4;
   s_screen_h = bounds.size.h;
@@ -297,39 +289,39 @@ static void fill_tri(GContext *ctx, GPoint a, GPoint b, GPoint c) {
 }
 
 static void draw_glyph(GContext *ctx, int glyph, GPoint c) {
-  graphics_context_set_fill_color(ctx, GColorWhite);
-  graphics_context_set_stroke_color(ctx, GColorWhite);
-  graphics_context_set_stroke_width(ctx, 3);
+  graphics_context_set_fill_color(ctx, color_ink());
+  graphics_context_set_stroke_color(ctx, color_ink());
+  graphics_context_set_stroke_width(ctx, 2);
 
   switch (glyph) {
     case GLYPH_PLAY:
-      fill_tri(ctx, GPoint(c.x - 5, c.y - 7), GPoint(c.x - 5, c.y + 7), GPoint(c.x + 7, c.y));
+      fill_tri(ctx, GPoint(c.x - 4, c.y - 6), GPoint(c.x - 4, c.y + 6), GPoint(c.x + 6, c.y));
       break;
     case GLYPH_PAUSE:
-      graphics_fill_rect(ctx, GRect(c.x - 6, c.y - 7, 4, 14), 1, GCornersAll);
-      graphics_fill_rect(ctx, GRect(c.x + 2, c.y - 7, 4, 14), 1, GCornersAll);
+      graphics_fill_rect(ctx, GRect(c.x - 5, c.y - 6, 3, 12), 1, GCornersAll);
+      graphics_fill_rect(ctx, GRect(c.x + 2, c.y - 6, 3, 12), 1, GCornersAll);
       break;
     case GLYPH_RESET:
       /* restart / skip-to-start: bar + left triangle */
-      graphics_fill_rect(ctx, GRect(c.x - 7, c.y - 7, 3, 14), 1, GCornersAll);
-      fill_tri(ctx, GPoint(c.x - 2, c.y), GPoint(c.x + 7, c.y - 7), GPoint(c.x + 7, c.y + 7));
+      graphics_fill_rect(ctx, GRect(c.x - 6, c.y - 6, 3, 12), 1, GCornersAll);
+      fill_tri(ctx, GPoint(c.x - 1, c.y), GPoint(c.x + 6, c.y - 6), GPoint(c.x + 6, c.y + 6));
       break;
     case GLYPH_SETTINGS:
       /* sliders: two tracks with offset knobs */
-      graphics_fill_rect(ctx, GRect(c.x - 7, c.y - 5, 14, 2), 1, GCornersAll);
-      graphics_fill_circle(ctx, GPoint(c.x + 2, c.y - 4), 3);
-      graphics_fill_rect(ctx, GRect(c.x - 7, c.y + 3, 14, 2), 1, GCornersAll);
+      graphics_fill_rect(ctx, GRect(c.x - 6, c.y - 4, 12, 2), 1, GCornersAll);
+      graphics_fill_circle(ctx, GPoint(c.x + 2, c.y - 3), 3);
+      graphics_fill_rect(ctx, GRect(c.x - 6, c.y + 3, 12, 2), 1, GCornersAll);
       graphics_fill_circle(ctx, GPoint(c.x - 2, c.y + 4), 3);
       break;
     case GLYPH_UP:
-      fill_tri(ctx, GPoint(c.x, c.y - 6), GPoint(c.x - 7, c.y + 5), GPoint(c.x + 7, c.y + 5));
+      fill_tri(ctx, GPoint(c.x, c.y - 5), GPoint(c.x - 6, c.y + 5), GPoint(c.x + 6, c.y + 5));
       break;
     case GLYPH_DOWN:
-      fill_tri(ctx, GPoint(c.x, c.y + 6), GPoint(c.x - 7, c.y - 5), GPoint(c.x + 7, c.y - 5));
+      fill_tri(ctx, GPoint(c.x, c.y + 5), GPoint(c.x - 6, c.y - 5), GPoint(c.x + 6, c.y - 5));
       break;
     case GLYPH_NEXT:
-      graphics_draw_line(ctx, GPoint(c.x - 3, c.y - 6), GPoint(c.x + 4, c.y));
-      graphics_draw_line(ctx, GPoint(c.x + 4, c.y), GPoint(c.x - 3, c.y + 6));
+      graphics_draw_line(ctx, GPoint(c.x - 2, c.y - 6), GPoint(c.x + 4, c.y));
+      graphics_draw_line(ctx, GPoint(c.x + 4, c.y), GPoint(c.x - 2, c.y + 6));
       break;
     case GLYPH_CHECK:
       graphics_draw_line(ctx, GPoint(c.x - 6, c.y + 1), GPoint(c.x - 1, c.y + 6));
@@ -338,26 +330,20 @@ static void draw_glyph(GContext *ctx, int glyph, GPoint c) {
   }
 }
 
-static void draw_chip(GContext *ctx, int glyph, GPoint c) {
-  graphics_context_set_fill_color(ctx, color_accent());
-  graphics_fill_rect(ctx, GRect(c.x - 13, c.y - 13, 26, 26), 6, GCornersAll);
-  draw_glyph(ctx, glyph, c);
-}
-
 static void draw_button_symbols(GContext *ctx, GRect bounds) {
-  int16_t x = bounds.size.w - 19;
+  int16_t x = bounds.size.w - 16;
   int16_t y_top = 21;
   int16_t y_bot = bounds.size.h - 22;
 
   if (s_mode == MODE_EDIT) {
-    draw_chip(ctx, GLYPH_UP, GPoint(x, y_top));
-    draw_chip(ctx, (s_edit_field == FIELD_MIN) ? GLYPH_NEXT : GLYPH_CHECK, GPoint(x, s_center_y));
-    draw_chip(ctx, GLYPH_DOWN, GPoint(x, y_bot));
+    draw_glyph(ctx, GLYPH_UP, GPoint(x, y_top));
+    draw_glyph(ctx, (s_edit_field == FIELD_MIN) ? GLYPH_NEXT : GLYPH_CHECK, GPoint(x, s_center_y));
+    draw_glyph(ctx, GLYPH_DOWN, GPoint(x, y_bot));
   } else {
-    draw_chip(ctx, s_state.running ? GLYPH_PAUSE : GLYPH_PLAY, GPoint(x, y_top));
-    draw_chip(ctx, GLYPH_SETTINGS, GPoint(x, s_center_y));
-    draw_chip(ctx, (s_state.running || total_elapsed() > 0) ? GLYPH_RESET : GLYPH_PLAY,
-              GPoint(x, y_bot));
+    draw_glyph(ctx, s_state.running ? GLYPH_PAUSE : GLYPH_PLAY, GPoint(x, y_top));
+    draw_glyph(ctx, GLYPH_SETTINGS, GPoint(x, s_center_y));
+    draw_glyph(ctx, (s_state.running || total_elapsed() > 0) ? GLYPH_RESET : GLYPH_PLAY,
+               GPoint(x, y_bot));
   }
 }
 
@@ -406,14 +392,20 @@ static void fill_update_proc(Layer *layer, GContext *ctx) {
   draw_button_symbols(ctx, bounds);
 
   if (s_mode == MODE_EDIT && s_font_big) {
-    /* Digit rects match the MODE_RUN timer (same y/height) so glyphs sit in the
-     * exact same place; the accent box wraps the active field snugly. */
+    /* A white card sits behind the whole MM:SS group so the digits stay
+     * readable over the frozen water-fill. The active field is inverted: a
+     * black box with a white digit; the other digits are black on the card.
+     * Digit rects match the MODE_RUN timer (same y/height) so glyphs align. */
     int16_t ry = s_center_y - 22;
     int16_t rh = 44;
+    int16_t card_left = s_min_x - 8;
+    int16_t card_w = (s_sec_x + s_box_w + 8) - card_left;
+    graphics_context_set_fill_color(ctx, GColorWhite);
+    graphics_fill_rect(ctx, GRect(card_left, s_center_y - 26, card_w, 52), 8, GCornersAll);
+
     int16_t active_x = (s_edit_field == FIELD_MIN) ? s_min_x : s_sec_x;
-    GRect box = GRect(active_x - 3, s_center_y - 20, s_box_w + 6, 40);
-    graphics_context_set_fill_color(ctx, color_accent());
-    graphics_fill_rect(ctx, box, 5, GCornersAll);
+    graphics_context_set_fill_color(ctx, color_ink());
+    graphics_fill_rect(ctx, GRect(active_x - 4, s_center_y - 22, s_box_w + 8, 44), 6, GCornersAll);
 
     GRect min_rect = GRect(s_min_x, ry, s_box_w, rh);
     GRect col_rect = GRect(s_colon_x - 10, ry, 20, rh);
