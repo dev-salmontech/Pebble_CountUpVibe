@@ -8,6 +8,11 @@
 #define EDIT_TIMEOUT_MS 15000
 #define SEC_STEP INTERVAL_GRID_SECONDS
 
+/* 0: every fresh launch starts at the 5 min default (stateless).
+ * 1: remember the last interval the user set across restarts.
+ * Flip to 1 to switch behaviours. */
+#define REMEMBER_INTERVAL 0
+
 #define COOKIE_VIBE 1
 
 enum {
@@ -875,19 +880,25 @@ static void init(void) {
     schedule_ui_tick();
     update_app_glance_safe();
   } else {
-    /* Manual launch: retain only the configured interval and start fully
-     * stopped (READY, water full). Any prior run/pause session is discarded. */
+    /* Manual launch: open the editor with the timer already running from a
+     * full cycle, so vibrations fire at the (default) interval until the user
+     * changes it. Run state never persists; only the interval optionally does
+     * (see REMEMBER_INTERVAL). */
     cancel_pending_wakeup();
-    s_state.running = false;
+#if !REMEMBER_INTERVAL
+    s_state.interval_seconds = DEFAULT_INTERVAL_SECONDS;
+#endif
+    s_state.running = true;
     s_state.elapsed_accum = 0;
-    s_state.run_started_epoch = 0;
-    s_state.next_vibe_epoch = 0;
+    s_state.run_started_epoch = now_seconds();
+    s_state.next_vibe_epoch = next_vibe_after(now_seconds());
     s_state.vibe_count = 0;
     s_frozen_cycle_elapsed = 0;
     state_save();
-    s_mode = MODE_RUN;
+    s_mode = MODE_EDIT;
     s_edit_field = FIELD_MIN;
     push_main_window();
+    enter_edit_mode();
     schedule_ui_tick();
     update_app_glance_safe();
   }
