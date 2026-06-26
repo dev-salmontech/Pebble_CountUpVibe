@@ -581,6 +581,7 @@ static void start_timer(void) {
   s_state.run_started_epoch = now_seconds();
   s_state.next_vibe_epoch = next_vibe_after(now_seconds());
   s_frozen_cycle_elapsed = 0;
+  vibes_enqueue_custom_pattern(s_vibe_pattern);
   state_save();
   cancel_ui_tick();
   schedule_ui_tick();
@@ -909,6 +910,7 @@ static void init(void) {
       s_state.next_vibe_epoch = next_vibe_after(now_seconds());
       s_state.vibe_count = 0;
       s_frozen_cycle_elapsed = 0;
+      vibes_enqueue_custom_pattern(s_vibe_pattern);
       state_save();
       s_mode = MODE_EDIT;
       s_edit_field = FIELD_MIN;
