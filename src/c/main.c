@@ -34,7 +34,8 @@ typedef struct {
 } TimerState;
 
 static Window *s_main_window;
-static Layer *s_fill_layer;
+static Layer *s_water_layer;
+static Layer *s_deco_layer;
 static TextLayer *s_clock_layer;
 static TextLayer *s_status_layer;
 static TextLayer *s_c_timer_layer;
@@ -54,6 +55,8 @@ static int32_t s_edit_min;
 static int32_t s_edit_sec;
 
 static int s_center_y;
+static int s_win_w;
+static int s_win_h;
 static GFont s_font_big;
 static GFont s_font_small;
 
@@ -265,6 +268,8 @@ static GColor color_ink(void) {
 }
 static void compute_layout(GRect bounds) {
   s_center_y = bounds.size.h / 2 + 4;
+  s_win_w = bounds.size.w;
+  s_win_h = bounds.size.h;
 }
 
 /* Action-bar style glyphs: white shapes centred on `c`, drawn over an accent
@@ -380,15 +385,18 @@ static int16_t compute_fill_height(int16_t h) {
   return compute_live_fill_height(h);
 }
 
-static void fill_update_proc(Layer *layer, GContext *ctx) {
-  GRect bounds = layer_get_bounds(layer);
-  graphics_context_set_fill_color(ctx, GColorWhite);
-  graphics_fill_rect(ctx, bounds, 0, GCornerNone);
-  int16_t fill_h = compute_fill_height(bounds.size.h);
+/* The water layer's frame IS the water rectangle (bottom-anchored, height =
+ * fill). It just paints itself solid; the area it vacates falls back to the
+ * white window background, so only the changed strip ever repaints. */
+static void water_update_proc(Layer *layer, GContext *ctx) {
   graphics_context_set_fill_color(ctx, color_water());
-  GRect fill = GRect(0, bounds.size.h - fill_h, bounds.size.w, fill_h);
-  graphics_fill_rect(ctx, fill, 0, GCornerNone);
+  graphics_fill_rect(ctx, layer_get_bounds(layer), 0, GCornerNone);
+}
 
+/* Decorations (button glyphs + edit panel) sit above the water on a
+ * transparent full-screen layer, redrawn only when mode/state/edit change. */
+static void deco_update_proc(Layer *layer, GContext *ctx) {
+  GRect bounds = layer_get_bounds(layer);
   draw_button_symbols(ctx, bounds);
 
   if (s_mode == MODE_EDIT && s_font_big && s_font_small) {
@@ -435,8 +443,8 @@ static void update_clock_text(void) {
 static void update_edit_display(void) {
   snprintf(s_min_buf, sizeof(s_min_buf), "%02ld", (long)s_edit_min);
   snprintf(s_sec_buf, sizeof(s_sec_buf), "%02ld", (long)s_edit_sec);
-  if (s_fill_layer) {
-    layer_mark_dirty(s_fill_layer);
+  if (s_deco_layer) {
+    layer_mark_dirty(s_deco_layer);
   }
 }
 
@@ -454,8 +462,8 @@ static void update_button_labels(void) {
   if (s_btn_down_layer) {
     text_layer_set_text(s_btn_down_layer, s_btn_down_text);
   }
-  if (s_fill_layer) {
-    layer_mark_dirty(s_fill_layer);
+  if (s_deco_layer) {
+    layer_mark_dirty(s_deco_layer);
   }
 }
 
@@ -508,12 +516,12 @@ static void update_ui(void) {
     strcpy(s_last_interval, s_interval_text);
   }
 
-  if (s_fill_layer) {
-    GRect fb = layer_get_bounds(s_fill_layer);
-    int16_t fh = compute_fill_height(fb.size.h);
+  if (s_water_layer) {
+    int16_t fh = compute_fill_height(s_win_h);
     if (fh != s_last_fill_h) {
       s_last_fill_h = fh;
-      layer_mark_dirty(s_fill_layer);
+      /* Resizing the frame dirties only the old+new strip; the rest stays. */
+      layer_set_frame(s_water_layer, GRect(0, s_win_h - fh, s_win_w, fh));
     }
   }
 }
@@ -743,9 +751,15 @@ static void main_window_load(Window *window) {
   s_path_up = gpath_create(&s_info_up);
   s_path_down = gpath_create(&s_info_down);
 
-  s_fill_layer = layer_create(bounds);
-  layer_set_update_proc(s_fill_layer, fill_update_proc);
-  layer_add_child(window_layer, s_fill_layer);
+  /* Water sits at the bottom; its frame grows/shrinks so only the changed
+   * strip repaints. Deco (glyphs + edit panel) is a transparent layer above. */
+  s_water_layer = layer_create(GRect(0, bounds.size.h, bounds.size.w, 0));
+  layer_set_update_proc(s_water_layer, water_update_proc);
+  layer_add_child(window_layer, s_water_layer);
+
+  s_deco_layer = layer_create(bounds);
+  layer_set_update_proc(s_deco_layer, deco_update_proc);
+  layer_add_child(window_layer, s_deco_layer);
 
   s_clock_layer = make_label(window_layer, GRect(0, 3, bounds.size.w, 20),
                              GTextAlignmentCenter, FONT_KEY_LECO_20_BOLD_NUMBERS, color_ink());
@@ -786,7 +800,8 @@ static void main_window_unload(Window *window) {
   text_layer_destroy(s_c_timer_layer);
   text_layer_destroy(s_status_layer);
   text_layer_destroy(s_clock_layer);
-  layer_destroy(s_fill_layer);
+  layer_destroy(s_deco_layer);
+  layer_destroy(s_water_layer);
   s_btn_down_layer = NULL;
   s_btn_center_layer = NULL;
   s_btn_up_layer = NULL;
@@ -795,7 +810,8 @@ static void main_window_unload(Window *window) {
   s_c_timer_layer = NULL;
   s_status_layer = NULL;
   s_clock_layer = NULL;
-  s_fill_layer = NULL;
+  s_water_layer = NULL;
+  s_deco_layer = NULL;
   s_font_big = NULL;
   s_font_small = NULL;
   gpath_destroy(s_path_play);
