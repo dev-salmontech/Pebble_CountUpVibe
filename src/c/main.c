@@ -253,95 +253,112 @@ static GColor color_water(void) {
 static GColor color_ink(void) {
   return GColorBlack;
 }
+static GColor color_accent(void) {
+#ifdef PBL_COLOR
+  return GColorFromHEX(0x0A64C8);
+#else
+  return GColorBlack;
+#endif
+}
 
 static void compute_layout(GRect bounds) {
   s_center_y = bounds.size.h / 2 + 4;
   s_screen_h = bounds.size.h;
-  s_box_w = 46;
-  int16_t row_w = s_box_w * 2 + 30;
-  int16_t row_left = (bounds.size.w - row_w) / 2;
-  s_min_x = row_left;
-  s_colon_x = row_left + s_box_w + 15;
-  s_sec_x = row_left + s_box_w + 30;
+  s_box_w = 44;
+  int16_t colon_w = 16;
+  int16_t gap = 6;
+  int16_t group_w = s_box_w * 2 + colon_w + gap * 2;
+  int16_t group_left = (bounds.size.w - group_w) / 2;
+  s_min_x = group_left;
+  s_colon_x = group_left + s_box_w + gap + colon_w / 2;  /* colon centre */
+  s_sec_x = group_left + s_box_w + gap + colon_w + gap;
 }
 
-static void draw_up_arrow(GContext *ctx, GPoint c) {
-  graphics_draw_line(ctx, GPoint(c.x, c.y - 6), GPoint(c.x, c.y + 5));
-  graphics_draw_line(ctx, GPoint(c.x, c.y - 6), GPoint(c.x - 4, c.y - 2));
-  graphics_draw_line(ctx, GPoint(c.x, c.y - 6), GPoint(c.x + 4, c.y - 2));
-}
+/* Action-bar style glyphs: white shapes centred on `c`, drawn over an accent
+ * chip so they stay legible against the water-fill or white background. */
 
-static void draw_down_arrow(GContext *ctx, GPoint c) {
-  graphics_draw_line(ctx, GPoint(c.x, c.y - 5), GPoint(c.x, c.y + 6));
-  graphics_draw_line(ctx, GPoint(c.x, c.y + 6), GPoint(c.x - 4, c.y + 2));
-  graphics_draw_line(ctx, GPoint(c.x, c.y + 6), GPoint(c.x + 4, c.y + 2));
-}
+enum {
+  GLYPH_PLAY,
+  GLYPH_PAUSE,
+  GLYPH_RESET,
+  GLYPH_SETTINGS,
+  GLYPH_UP,
+  GLYPH_DOWN,
+  GLYPH_NEXT,
+  GLYPH_CHECK
+};
 
-static void draw_play_icon(GContext *ctx, GPoint c) {
-  GPoint points[3] = { GPoint(c.x - 3, c.y - 6), GPoint(c.x - 3, c.y + 6), GPoint(c.x + 6, c.y) };
-  GPathInfo info = { .num_points = 3, .points = points };
+static void fill_tri(GContext *ctx, GPoint a, GPoint b, GPoint c) {
+  GPoint pts[3] = { a, b, c };
+  GPathInfo info = { .num_points = 3, .points = pts };
   GPath *path = gpath_create(&info);
   gpath_draw_filled(ctx, path);
   gpath_destroy(path);
 }
 
-static void draw_pause_icon(GContext *ctx, GPoint c) {
-  graphics_fill_rect(ctx, GRect(c.x - 5, c.y - 6, 3, 12), 0, GCornerNone);
-  graphics_fill_rect(ctx, GRect(c.x + 2, c.y - 6, 3, 12), 0, GCornerNone);
+static void draw_glyph(GContext *ctx, int glyph, GPoint c) {
+  graphics_context_set_fill_color(ctx, GColorWhite);
+  graphics_context_set_stroke_color(ctx, GColorWhite);
+  graphics_context_set_stroke_width(ctx, 3);
+
+  switch (glyph) {
+    case GLYPH_PLAY:
+      fill_tri(ctx, GPoint(c.x - 5, c.y - 7), GPoint(c.x - 5, c.y + 7), GPoint(c.x + 7, c.y));
+      break;
+    case GLYPH_PAUSE:
+      graphics_fill_rect(ctx, GRect(c.x - 6, c.y - 7, 4, 14), 1, GCornersAll);
+      graphics_fill_rect(ctx, GRect(c.x + 2, c.y - 7, 4, 14), 1, GCornersAll);
+      break;
+    case GLYPH_RESET:
+      /* restart / skip-to-start: bar + left triangle */
+      graphics_fill_rect(ctx, GRect(c.x - 7, c.y - 7, 3, 14), 1, GCornersAll);
+      fill_tri(ctx, GPoint(c.x - 2, c.y), GPoint(c.x + 7, c.y - 7), GPoint(c.x + 7, c.y + 7));
+      break;
+    case GLYPH_SETTINGS:
+      /* sliders: two tracks with offset knobs */
+      graphics_fill_rect(ctx, GRect(c.x - 7, c.y - 5, 14, 2), 1, GCornersAll);
+      graphics_fill_circle(ctx, GPoint(c.x + 2, c.y - 4), 3);
+      graphics_fill_rect(ctx, GRect(c.x - 7, c.y + 3, 14, 2), 1, GCornersAll);
+      graphics_fill_circle(ctx, GPoint(c.x - 2, c.y + 4), 3);
+      break;
+    case GLYPH_UP:
+      fill_tri(ctx, GPoint(c.x, c.y - 6), GPoint(c.x - 7, c.y + 5), GPoint(c.x + 7, c.y + 5));
+      break;
+    case GLYPH_DOWN:
+      fill_tri(ctx, GPoint(c.x, c.y + 6), GPoint(c.x - 7, c.y - 5), GPoint(c.x + 7, c.y - 5));
+      break;
+    case GLYPH_NEXT:
+      graphics_draw_line(ctx, GPoint(c.x - 3, c.y - 6), GPoint(c.x + 4, c.y));
+      graphics_draw_line(ctx, GPoint(c.x + 4, c.y), GPoint(c.x - 3, c.y + 6));
+      break;
+    case GLYPH_CHECK:
+      graphics_draw_line(ctx, GPoint(c.x - 6, c.y + 1), GPoint(c.x - 1, c.y + 6));
+      graphics_draw_line(ctx, GPoint(c.x - 1, c.y + 6), GPoint(c.x + 7, c.y - 6));
+      break;
+  }
 }
 
-static void draw_check_icon(GContext *ctx, GPoint c) {
-  graphics_draw_line(ctx, GPoint(c.x - 6, c.y), GPoint(c.x - 2, c.y + 5));
-  graphics_draw_line(ctx, GPoint(c.x - 2, c.y + 5), GPoint(c.x + 7, c.y - 6));
-}
-
-static void draw_reset_icon(GContext *ctx, GPoint c) {
-  graphics_draw_circle(ctx, c, 6);
-  graphics_draw_line(ctx, GPoint(c.x - 5, c.y - 2), GPoint(c.x - 8, c.y - 6));
-  graphics_draw_line(ctx, GPoint(c.x - 5, c.y - 2), GPoint(c.x - 1, c.y - 5));
-}
-
-static void draw_gear_icon(GContext *ctx, GPoint c) {
-  graphics_draw_circle(ctx, c, 5);
-  graphics_fill_circle(ctx, c, 2);
-  graphics_draw_line(ctx, GPoint(c.x, c.y - 9), GPoint(c.x, c.y - 7));
-  graphics_draw_line(ctx, GPoint(c.x, c.y + 7), GPoint(c.x, c.y + 9));
-  graphics_draw_line(ctx, GPoint(c.x - 9, c.y), GPoint(c.x - 7, c.y));
-  graphics_draw_line(ctx, GPoint(c.x + 7, c.y), GPoint(c.x + 9, c.y));
-  graphics_draw_line(ctx, GPoint(c.x - 6, c.y - 6), GPoint(c.x - 5, c.y - 5));
-  graphics_draw_line(ctx, GPoint(c.x + 5, c.y - 5), GPoint(c.x + 6, c.y - 6));
-  graphics_draw_line(ctx, GPoint(c.x - 6, c.y + 6), GPoint(c.x - 5, c.y + 5));
-  graphics_draw_line(ctx, GPoint(c.x + 5, c.y + 5), GPoint(c.x + 6, c.y + 6));
+static void draw_chip(GContext *ctx, int glyph, GPoint c) {
+  graphics_context_set_fill_color(ctx, color_accent());
+  graphics_fill_rect(ctx, GRect(c.x - 13, c.y - 13, 26, 26), 6, GCornersAll);
+  draw_glyph(ctx, glyph, c);
 }
 
 static void draw_button_symbols(GContext *ctx, GRect bounds) {
-  graphics_context_set_fill_color(ctx, GColorBlack);
-  graphics_context_set_stroke_color(ctx, GColorBlack);
-  graphics_context_set_stroke_width(ctx, 1);
+  int16_t x = bounds.size.w - 19;
+  int16_t y_top = 21;
+  int16_t y_bot = bounds.size.h - 22;
 
-  int16_t x = bounds.size.w - 9;
   if (s_mode == MODE_EDIT) {
-    draw_up_arrow(ctx, GPoint(x, 15));
-    if (s_edit_field == FIELD_MIN) {
-      draw_gear_icon(ctx, GPoint(x, s_center_y));
-    } else {
-      draw_check_icon(ctx, GPoint(x, s_center_y));
-    }
-    draw_down_arrow(ctx, GPoint(x, bounds.size.h - 17));
+    draw_chip(ctx, GLYPH_UP, GPoint(x, y_top));
+    draw_chip(ctx, (s_edit_field == FIELD_MIN) ? GLYPH_NEXT : GLYPH_CHECK, GPoint(x, s_center_y));
+    draw_chip(ctx, GLYPH_DOWN, GPoint(x, y_bot));
   } else {
-    if (s_state.running) {
-      draw_pause_icon(ctx, GPoint(x, 15));
-    } else {
-      draw_play_icon(ctx, GPoint(x, 15));
-    }
-    draw_gear_icon(ctx, GPoint(x, s_center_y));
-    if (s_state.running || total_elapsed() > 0) {
-      draw_reset_icon(ctx, GPoint(x, bounds.size.h - 17));
-    } else {
-      draw_play_icon(ctx, GPoint(x, bounds.size.h - 17));
-    }
+    draw_chip(ctx, s_state.running ? GLYPH_PAUSE : GLYPH_PLAY, GPoint(x, y_top));
+    draw_chip(ctx, GLYPH_SETTINGS, GPoint(x, s_center_y));
+    draw_chip(ctx, (s_state.running || total_elapsed() > 0) ? GLYPH_RESET : GLYPH_PLAY,
+              GPoint(x, y_bot));
   }
-
 }
 
 static int16_t compute_live_fill_height(int16_t h) {
@@ -389,22 +406,25 @@ static void fill_update_proc(Layer *layer, GContext *ctx) {
   draw_button_symbols(ctx, bounds);
 
   if (s_mode == MODE_EDIT && s_font_big) {
-    int16_t cy = s_center_y;
-    int16_t bx = (s_edit_field == FIELD_MIN) ? s_min_x : s_sec_x;
-    GRect box = GRect(bx, cy - 22, s_box_w, 44);
-    graphics_context_set_fill_color(ctx, GColorBlack);
-    graphics_fill_rect(ctx, box, 6, GCornersAll);
+    /* Digit rects match the MODE_RUN timer (same y/height) so glyphs sit in the
+     * exact same place; the accent box wraps the active field snugly. */
+    int16_t ry = s_center_y - 22;
+    int16_t rh = 44;
+    int16_t active_x = (s_edit_field == FIELD_MIN) ? s_min_x : s_sec_x;
+    GRect box = GRect(active_x - 3, s_center_y - 20, s_box_w + 6, 40);
+    graphics_context_set_fill_color(ctx, color_accent());
+    graphics_fill_rect(ctx, box, 5, GCornersAll);
 
-    GRect min_rect = GRect(s_min_x, cy - 22, s_box_w, 44);
-    GRect col_rect = GRect(s_colon_x - 10, cy - 22, 20, 44);
-    GRect sec_rect = GRect(s_sec_x, cy - 22, s_box_w, 44);
+    GRect min_rect = GRect(s_min_x, ry, s_box_w, rh);
+    GRect col_rect = GRect(s_colon_x - 10, ry, 20, rh);
+    GRect sec_rect = GRect(s_sec_x, ry, s_box_w, rh);
 
     graphics_context_set_text_color(ctx, (s_edit_field == FIELD_MIN) ? GColorWhite : color_ink());
-    graphics_draw_text(ctx, s_min_buf, s_font_big, min_rect, GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
+    graphics_draw_text(ctx, s_min_buf, s_font_big, min_rect, GTextOverflowModeFill, GTextAlignmentCenter, NULL);
     graphics_context_set_text_color(ctx, color_ink());
-    graphics_draw_text(ctx, ":", s_font_big, col_rect, GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
+    graphics_draw_text(ctx, ":", s_font_big, col_rect, GTextOverflowModeFill, GTextAlignmentCenter, NULL);
     graphics_context_set_text_color(ctx, (s_edit_field == FIELD_SEC) ? GColorWhite : color_ink());
-    graphics_draw_text(ctx, s_sec_buf, s_font_big, sec_rect, GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
+    graphics_draw_text(ctx, s_sec_buf, s_font_big, sec_rect, GTextOverflowModeFill, GTextAlignmentCenter, NULL);
   }
 }
 
