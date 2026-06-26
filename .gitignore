@@ -10,3 +10,16 @@ __pycache__/
 .lock-waf_*
 .env
 *.env
+
+# Non-app files kept private (public repo holds only the buildable app:
+# appinfo.json, wscript, src/, resources/).
+README.md
+AGENTS.md
+SUBMISSION.md
+APP_SPEC_ARCHITECTURE.md
+opencode.json
+assets/
+tools/
+Screenshot*.png
+*.png
+!resources/**/*.png
