@@ -54,13 +54,10 @@ static int32_t s_edit_min;
 static int32_t s_edit_sec;
 
 static int s_center_y;
-static int s_min_x;
-static int s_sec_x;
-static int s_colon_x;
-static int s_box_w;
 static int s_screen_h;
 static int16_t s_edit_freeze_h;
 static GFont s_font_big;
+static GFont s_font_small;
 
 static char s_clock_text[16];
 static char s_status_text[16];
@@ -256,14 +253,6 @@ static GColor color_ink(void) {
 static void compute_layout(GRect bounds) {
   s_center_y = bounds.size.h / 2 + 4;
   s_screen_h = bounds.size.h;
-  s_box_w = 44;
-  int16_t colon_w = 16;
-  int16_t gap = 6;
-  int16_t group_w = s_box_w * 2 + colon_w + gap * 2;
-  int16_t group_left = (bounds.size.w - group_w) / 2;
-  s_min_x = group_left;
-  s_colon_x = group_left + s_box_w + gap + colon_w / 2;  /* colon centre */
-  s_sec_x = group_left + s_box_w + gap + colon_w + gap;
 }
 
 /* Action-bar style glyphs: white shapes centred on `c`, drawn over an accent
@@ -391,32 +380,38 @@ static void fill_update_proc(Layer *layer, GContext *ctx) {
 
   draw_button_symbols(ctx, bounds);
 
-  if (s_mode == MODE_EDIT && s_font_big) {
-    /* A white card sits behind the whole MM:SS group so the digits stay
-     * readable over the frozen water-fill. The active field is inverted: a
-     * black box with a white digit; the other digits are black on the card.
-     * Digit rects match the MODE_RUN timer (same y/height) so glyphs align. */
-    int16_t ry = s_center_y - 22;
-    int16_t rh = 44;
-    int16_t card_left = s_min_x - 8;
-    int16_t card_w = (s_sec_x + s_box_w + 8) - card_left;
+  if (s_mode == MODE_EDIT && s_font_big && s_font_small) {
+    /* Fields stacked vertically and centred:  MINS / <min> / <sec> / SECS.
+     * A white card keeps everything readable over the frozen water-fill; the
+     * active field is inverted (black box, white value). Values use full-width
+     * centred rects so two digits never wrap. */
+    int16_t cx = bounds.size.w / 2;
+    int16_t cy = s_center_y;
+    int16_t w = bounds.size.w;
+
+    int16_t min_y = cy - 38;   /* top of minutes value rect */
+    int16_t sec_y = cy - 2;    /* top of seconds value rect */
+    int16_t vh = 40;           /* value/box height */
+
     graphics_context_set_fill_color(ctx, GColorWhite);
-    graphics_fill_rect(ctx, GRect(card_left, s_center_y - 26, card_w, 52), 8, GCornersAll);
+    graphics_fill_rect(ctx, GRect(cx - 54, cy - 58, 108, 116), 10, GCornersAll);
 
-    int16_t active_x = (s_edit_field == FIELD_MIN) ? s_min_x : s_sec_x;
+    int16_t active_y = (s_edit_field == FIELD_MIN) ? min_y : sec_y;
     graphics_context_set_fill_color(ctx, color_ink());
-    graphics_fill_rect(ctx, GRect(active_x - 4, s_center_y - 22, s_box_w + 8, 44), 6, GCornersAll);
+    graphics_fill_rect(ctx, GRect(cx - 38, active_y, 76, vh), 6, GCornersAll);
 
-    GRect min_rect = GRect(s_min_x, ry, s_box_w, rh);
-    GRect col_rect = GRect(s_colon_x - 10, ry, 20, rh);
-    GRect sec_rect = GRect(s_sec_x, ry, s_box_w, rh);
+    graphics_context_set_text_color(ctx, color_ink());
+    graphics_draw_text(ctx, "MINS", s_font_small, GRect(0, cy - 56, w, 16),
+                       GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
+    graphics_draw_text(ctx, "SECS", s_font_small, GRect(0, cy + 40, w, 16),
+                       GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
 
     graphics_context_set_text_color(ctx, (s_edit_field == FIELD_MIN) ? GColorWhite : color_ink());
-    graphics_draw_text(ctx, s_min_buf, s_font_big, min_rect, GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
-    graphics_context_set_text_color(ctx, color_ink());
-    graphics_draw_text(ctx, ":", s_font_big, col_rect, GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
+    graphics_draw_text(ctx, s_min_buf, s_font_big, GRect(0, min_y - 4, w, vh),
+                       GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
     graphics_context_set_text_color(ctx, (s_edit_field == FIELD_SEC) ? GColorWhite : color_ink());
-    graphics_draw_text(ctx, s_sec_buf, s_font_big, sec_rect, GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
+    graphics_draw_text(ctx, s_sec_buf, s_font_big, GRect(0, sec_y - 4, w, vh),
+                       GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
   }
 }
 
@@ -730,7 +725,8 @@ static void main_window_load(Window *window) {
   GRect bounds = layer_get_bounds(window_layer);
   compute_layout(bounds);
 
-  s_font_big = fonts_get_system_font(FONT_KEY_LECO_42_NUMBERS);
+  s_font_big = fonts_get_system_font(FONT_KEY_LECO_32_BOLD_NUMBERS);
+  s_font_small = fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD);
 
   s_fill_layer = layer_create(bounds);
   layer_set_update_proc(s_fill_layer, fill_update_proc);
@@ -786,6 +782,7 @@ static void main_window_unload(Window *window) {
   s_clock_layer = NULL;
   s_fill_layer = NULL;
   s_font_big = NULL;
+  s_font_small = NULL;
 }
 
 static void wakeup_handler(WakeupId id, int32_t cookie) {
