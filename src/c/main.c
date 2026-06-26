@@ -119,10 +119,10 @@ static int32_t now_seconds(void) {
 }
 
 static int32_t next_vibe_after(int32_t t) {
-  int32_t g = INTERVAL_GRID_SECONDS;
-  int32_t interval = s_state.interval_seconds > 0 ? s_state.interval_seconds : g;
-  int32_t down = (t / g) * g;
-  return down + interval;
+  /* Relative to the moment the run/cycle starts (not clock-grid aligned) so a
+   * fresh start always begins a full interval -> water starts at the top. */
+  int32_t interval = s_state.interval_seconds > 0 ? s_state.interval_seconds : INTERVAL_GRID_SECONDS;
+  return t + interval;
 }
 
 static int32_t total_elapsed(void) {
@@ -593,7 +593,6 @@ static void pause_timer(void) {
   s_state.run_started_epoch = 0;
   state_save();
   cancel_pending_wakeup();
-  cancel_ui_tick();
   update_app_glance_safe();
   update_ui();
 }
@@ -607,7 +606,28 @@ static void reset_timer(void) {
   s_frozen_cycle_elapsed = 0;
   state_save();
   cancel_pending_wakeup();
+  update_app_glance_safe();
+  update_ui();
+}
+
+static void resume_timer(void) {
+  /* Continue the frozen cycle from where it paused (water resumes mid-level),
+   * unlike start_timer which begins a fresh, full cycle. */
+  int32_t interval = s_state.interval_seconds > 0 ? s_state.interval_seconds : 1;
+  int32_t left = interval - s_frozen_cycle_elapsed;
+  if (left < 0) {
+    left = 0;
+  }
+  if (left > interval || left == 0) {
+    left = interval;
+  }
+  s_state.elapsed_accum = total_elapsed();
+  s_state.running = true;
+  s_state.run_started_epoch = now_seconds();
+  s_state.next_vibe_epoch = now_seconds() + left;
+  state_save();
   cancel_ui_tick();
+  schedule_ui_tick();
   update_app_glance_safe();
   update_ui();
 }
@@ -678,6 +698,8 @@ static void up_click_handler(ClickRecognizerRef recognizer, void *context) {
   } else {
     if (s_state.running) {
       pause_timer();
+    } else if (total_elapsed() > 0) {
+      resume_timer();
     } else {
       start_timer();
     }
@@ -853,27 +875,21 @@ static void init(void) {
     schedule_ui_tick();
     update_app_glance_safe();
   } else {
+    /* Manual launch: retain only the configured interval and start fully
+     * stopped (READY, water full). Any prior run/pause session is discarded. */
     cancel_pending_wakeup();
-    bool resume_paused = persist_exists(PERSIST_INITIALIZED) &&
-                         !s_state.running && s_state.elapsed_accum > 0;
+    s_state.running = false;
+    s_state.elapsed_accum = 0;
+    s_state.run_started_epoch = 0;
+    s_state.next_vibe_epoch = 0;
+    s_state.vibe_count = 0;
+    s_frozen_cycle_elapsed = 0;
+    state_save();
+    s_mode = MODE_RUN;
     s_edit_field = FIELD_MIN;
-    if (resume_paused) {
-      s_mode = MODE_RUN;
-      push_main_window();
-      schedule_ui_tick();
-      update_app_glance_safe();
-    } else {
-      s_state.running = true;
-      if (s_state.next_vibe_epoch <= now_seconds()) {
-        s_state.next_vibe_epoch = next_vibe_after(now_seconds());
-      }
-      s_frozen_cycle_elapsed = 0;
-      state_save();
-      s_mode = MODE_EDIT;
-      push_main_window();
-      enter_edit_mode();
-      update_app_glance_safe();
-    }
+    push_main_window();
+    schedule_ui_tick();
+    update_app_glance_safe();
   }
 }
 
