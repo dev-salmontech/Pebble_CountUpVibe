@@ -412,11 +412,11 @@ static void fill_update_proc(Layer *layer, GContext *ctx) {
     GRect sec_rect = GRect(s_sec_x, ry, s_box_w, rh);
 
     graphics_context_set_text_color(ctx, (s_edit_field == FIELD_MIN) ? GColorWhite : color_ink());
-    graphics_draw_text(ctx, s_min_buf, s_font_big, min_rect, GTextOverflowModeFill, GTextAlignmentCenter, NULL);
+    graphics_draw_text(ctx, s_min_buf, s_font_big, min_rect, GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
     graphics_context_set_text_color(ctx, color_ink());
-    graphics_draw_text(ctx, ":", s_font_big, col_rect, GTextOverflowModeFill, GTextAlignmentCenter, NULL);
+    graphics_draw_text(ctx, ":", s_font_big, col_rect, GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
     graphics_context_set_text_color(ctx, (s_edit_field == FIELD_SEC) ? GColorWhite : color_ink());
-    graphics_draw_text(ctx, s_sec_buf, s_font_big, sec_rect, GTextOverflowModeFill, GTextAlignmentCenter, NULL);
+    graphics_draw_text(ctx, s_sec_buf, s_font_big, sec_rect, GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
   }
 }
 
