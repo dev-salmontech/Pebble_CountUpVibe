@@ -216,11 +216,13 @@ static void state_save(void) {
 
 static void state_load_or_default(void) {
   if (!persist_exists(PERSIST_INITIALIZED)) {
-    s_state.running = true;
+    /* First ever launch: start in a READY (reset-to-zero) state so init's
+     * manual-launch path treats it as inactive and opens the default editor. */
+    s_state.running = false;
     s_state.elapsed_accum = 0;
-    s_state.run_started_epoch = now_seconds();
+    s_state.run_started_epoch = 0;
     s_state.interval_seconds = DEFAULT_INTERVAL_SECONDS;
-    s_state.next_vibe_epoch = next_vibe_after(now_seconds());
+    s_state.next_vibe_epoch = 0;
     s_state.vibe_count = 0;
     s_frozen_cycle_elapsed = 0;
     state_save();
@@ -880,27 +882,41 @@ static void init(void) {
     schedule_ui_tick();
     update_app_glance_safe();
   } else {
-    /* Manual launch: open the editor with the timer already running from a
-     * full cycle, so vibrations fire at the (default) interval until the user
-     * changes it. Run state never persists; only the interval optionally does
-     * (see REMEMBER_INTERVAL). */
+    /* Manual launch (foreground). If a timer session is still active -- either
+     * running, or paused with elapsed time (a paused timer counts as active) --
+     * restore it and continue where it left off. run_started_epoch and
+     * next_vibe_epoch are absolute, so a running timer keeps advancing across
+     * the time the app spent in the background. Only when the timer was reset
+     * to zero (READY) do we fall back to the default running editor. */
     cancel_pending_wakeup();
+    bool was_active = s_state.running || s_state.elapsed_accum > 0;
+    if (was_active) {
+      s_mode = MODE_RUN;
+      s_edit_field = FIELD_MIN;
+      push_main_window();
+      schedule_ui_tick();
+      update_app_glance_safe();
+    } else {
+      /* Default: open the editor with the timer already running from a full
+       * cycle, so vibrations fire at the (default) interval until the user
+       * changes it. Only the interval optionally persists (REMEMBER_INTERVAL). */
 #if !REMEMBER_INTERVAL
-    s_state.interval_seconds = DEFAULT_INTERVAL_SECONDS;
+      s_state.interval_seconds = DEFAULT_INTERVAL_SECONDS;
 #endif
-    s_state.running = true;
-    s_state.elapsed_accum = 0;
-    s_state.run_started_epoch = now_seconds();
-    s_state.next_vibe_epoch = next_vibe_after(now_seconds());
-    s_state.vibe_count = 0;
-    s_frozen_cycle_elapsed = 0;
-    state_save();
-    s_mode = MODE_EDIT;
-    s_edit_field = FIELD_MIN;
-    push_main_window();
-    enter_edit_mode();
-    schedule_ui_tick();
-    update_app_glance_safe();
+      s_state.running = true;
+      s_state.elapsed_accum = 0;
+      s_state.run_started_epoch = now_seconds();
+      s_state.next_vibe_epoch = next_vibe_after(now_seconds());
+      s_state.vibe_count = 0;
+      s_frozen_cycle_elapsed = 0;
+      state_save();
+      s_mode = MODE_EDIT;
+      s_edit_field = FIELD_MIN;
+      push_main_window();
+      enter_edit_mode();
+      schedule_ui_tick();
+      update_app_glance_safe();
+    }
   }
 }
 
