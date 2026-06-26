@@ -54,10 +54,23 @@ static int32_t s_edit_min;
 static int32_t s_edit_sec;
 
 static int s_center_y;
-static int s_screen_h;
-static int16_t s_edit_freeze_h;
 static GFont s_font_big;
 static GFont s_font_small;
+
+/* Glyph triangles, cached once and translated per draw to avoid per-frame
+ * heap churn in the render path. Points are relative to the glyph centre. */
+static GPoint s_pts_play[3]  = {{-4, -6}, {-4, 6}, {6, 0}};
+static GPoint s_pts_reset[3] = {{-1, 0}, {6, -6}, {6, 6}};
+static GPoint s_pts_up[3]    = {{0, -5}, {-6, 5}, {6, 5}};
+static GPoint s_pts_down[3]  = {{0, 5}, {-6, -5}, {6, -5}};
+static GPathInfo s_info_play  = {3, s_pts_play};
+static GPathInfo s_info_reset = {3, s_pts_reset};
+static GPathInfo s_info_up    = {3, s_pts_up};
+static GPathInfo s_info_down  = {3, s_pts_down};
+static GPath *s_path_play;
+static GPath *s_path_reset;
+static GPath *s_path_up;
+static GPath *s_path_down;
 
 static char s_clock_text[16];
 static char s_status_text[16];
@@ -252,7 +265,6 @@ static GColor color_ink(void) {
 }
 static void compute_layout(GRect bounds) {
   s_center_y = bounds.size.h / 2 + 4;
-  s_screen_h = bounds.size.h;
 }
 
 /* Action-bar style glyphs: white shapes centred on `c`, drawn over an accent
@@ -269,12 +281,12 @@ enum {
   GLYPH_CHECK
 };
 
-static void fill_tri(GContext *ctx, GPoint a, GPoint b, GPoint c) {
-  GPoint pts[3] = { a, b, c };
-  GPathInfo info = { .num_points = 3, .points = pts };
-  GPath *path = gpath_create(&info);
-  gpath_draw_filled(ctx, path);
-  gpath_destroy(path);
+static void draw_tri(GContext *ctx, GPath *p, GPoint c) {
+  if (!p) {
+    return;
+  }
+  gpath_move_to(p, c);
+  gpath_draw_filled(ctx, p);
 }
 
 static void draw_glyph(GContext *ctx, int glyph, GPoint c) {
@@ -284,7 +296,7 @@ static void draw_glyph(GContext *ctx, int glyph, GPoint c) {
 
   switch (glyph) {
     case GLYPH_PLAY:
-      fill_tri(ctx, GPoint(c.x - 4, c.y - 6), GPoint(c.x - 4, c.y + 6), GPoint(c.x + 6, c.y));
+      draw_tri(ctx, s_path_play, c);
       break;
     case GLYPH_PAUSE:
       graphics_fill_rect(ctx, GRect(c.x - 5, c.y - 6, 3, 12), 1, GCornersAll);
@@ -293,7 +305,7 @@ static void draw_glyph(GContext *ctx, int glyph, GPoint c) {
     case GLYPH_RESET:
       /* restart / skip-to-start: bar + left triangle */
       graphics_fill_rect(ctx, GRect(c.x - 6, c.y - 6, 3, 12), 1, GCornersAll);
-      fill_tri(ctx, GPoint(c.x - 1, c.y), GPoint(c.x + 6, c.y - 6), GPoint(c.x + 6, c.y + 6));
+      draw_tri(ctx, s_path_reset, c);
       break;
     case GLYPH_SETTINGS:
       /* sliders: two tracks with offset knobs */
@@ -303,10 +315,10 @@ static void draw_glyph(GContext *ctx, int glyph, GPoint c) {
       graphics_fill_circle(ctx, GPoint(c.x - 2, c.y + 4), 3);
       break;
     case GLYPH_UP:
-      fill_tri(ctx, GPoint(c.x, c.y - 5), GPoint(c.x - 6, c.y + 5), GPoint(c.x + 6, c.y + 5));
+      draw_tri(ctx, s_path_up, c);
       break;
     case GLYPH_DOWN:
-      fill_tri(ctx, GPoint(c.x, c.y + 5), GPoint(c.x - 6, c.y - 5), GPoint(c.x + 6, c.y - 5));
+      draw_tri(ctx, s_path_down, c);
       break;
     case GLYPH_NEXT:
       graphics_draw_line(ctx, GPoint(c.x - 2, c.y - 6), GPoint(c.x + 4, c.y));
@@ -363,9 +375,8 @@ static int16_t compute_live_fill_height(int16_t h) {
 }
 
 static int16_t compute_fill_height(int16_t h) {
-  if (s_mode == MODE_EDIT) {
-    return s_edit_freeze_h;
-  }
+  /* Live in every mode: the water keeps rising while the timer runs (even in
+   * edit mode); when paused, compute_live_fill_height holds the frozen cycle. */
   return compute_live_fill_height(h);
 }
 
@@ -632,7 +643,6 @@ static void edit_timeout_handler(void *context) {
 }
 
 static void enter_edit_mode(void) {
-  s_edit_freeze_h = compute_live_fill_height(s_screen_h);
   s_mode = MODE_EDIT;
   s_edit_field = FIELD_MIN;
   s_edit_min = s_state.interval_seconds / 60;
@@ -728,6 +738,11 @@ static void main_window_load(Window *window) {
   s_font_big = fonts_get_system_font(FONT_KEY_LECO_32_BOLD_NUMBERS);
   s_font_small = fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD);
 
+  s_path_play = gpath_create(&s_info_play);
+  s_path_reset = gpath_create(&s_info_reset);
+  s_path_up = gpath_create(&s_info_up);
+  s_path_down = gpath_create(&s_info_down);
+
   s_fill_layer = layer_create(bounds);
   layer_set_update_proc(s_fill_layer, fill_update_proc);
   layer_add_child(window_layer, s_fill_layer);
@@ -783,6 +798,14 @@ static void main_window_unload(Window *window) {
   s_fill_layer = NULL;
   s_font_big = NULL;
   s_font_small = NULL;
+  gpath_destroy(s_path_play);
+  gpath_destroy(s_path_reset);
+  gpath_destroy(s_path_up);
+  gpath_destroy(s_path_down);
+  s_path_play = NULL;
+  s_path_reset = NULL;
+  s_path_up = NULL;
+  s_path_down = NULL;
 }
 
 static void wakeup_handler(WakeupId id, int32_t cookie) {
