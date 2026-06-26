@@ -101,6 +101,12 @@ static const VibePattern s_vibe_pattern = {
   .num_segments = 3
 };
 
+static const uint32_t s_start_vibe_durations[] = { 50 };
+static const VibePattern s_start_vibe_pattern = {
+  .durations = s_start_vibe_durations,
+  .num_segments = 1
+};
+
 static void update_ui(void);
 static void schedule_ui_tick(void);
 static void update_app_glance_safe(void);
@@ -581,7 +587,7 @@ static void start_timer(void) {
   s_state.run_started_epoch = now_seconds();
   s_state.next_vibe_epoch = next_vibe_after(now_seconds());
   s_frozen_cycle_elapsed = 0;
-  vibes_enqueue_custom_pattern(s_vibe_pattern);
+  vibes_enqueue_custom_pattern(s_start_vibe_pattern);
   state_save();
   cancel_ui_tick();
   schedule_ui_tick();
@@ -910,7 +916,7 @@ static void init(void) {
       s_state.next_vibe_epoch = next_vibe_after(now_seconds());
       s_state.vibe_count = 0;
       s_frozen_cycle_elapsed = 0;
-      vibes_enqueue_custom_pattern(s_vibe_pattern);
+      vibes_enqueue_custom_pattern(s_start_vibe_pattern);
       state_save();
       s_mode = MODE_EDIT;
       s_edit_field = FIELD_MIN;
