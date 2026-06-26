@@ -354,25 +354,22 @@ static void draw_button_symbols(GContext *ctx, GRect bounds) {
 }
 
 static int16_t compute_live_fill_height(int16_t h) {
+  /* Draining fill: full at the start of each interval cycle, emptying to zero
+   * as the countdown reaches the next vibe (height = remaining / interval). */
   int32_t interval = s_state.interval_seconds > 0 ? s_state.interval_seconds : 1;
-  int32_t elapsed_in_cycle;
+  int32_t remaining;
   if (s_state.running) {
-    int32_t left = secs_to_vibe();
-    if (left > interval) {
-      left = interval;
-    }
-    elapsed_in_cycle = interval - left;
+    remaining = secs_to_vibe();
   } else {
-    elapsed_in_cycle = s_frozen_cycle_elapsed;
+    remaining = interval - s_frozen_cycle_elapsed;
   }
-  if (elapsed_in_cycle < 0) {
-    elapsed_in_cycle = 0;
+  if (remaining < 0) {
+    remaining = 0;
   }
-  if (elapsed_in_cycle > interval) {
-    elapsed_in_cycle = interval;
+  if (remaining > interval) {
+    remaining = interval;
   }
-  int32_t denom = (interval > 1) ? (interval - 1) : 1;
-  int32_t fh = (elapsed_in_cycle * h) / denom;
+  int32_t fh = (remaining * h) / interval;
   if (fh > h) {
     fh = h;
   }
@@ -380,7 +377,7 @@ static int16_t compute_live_fill_height(int16_t h) {
 }
 
 static int16_t compute_fill_height(int16_t h) {
-  /* Live in every mode: the water keeps rising while the timer runs (even in
+  /* Live in every mode: the water keeps draining while the timer runs (even in
    * edit mode); when paused, compute_live_fill_height holds the frozen cycle. */
   return compute_live_fill_height(h);
 }
