@@ -635,16 +635,21 @@ static void apply_tick_unit(void) {
 }
 
 static void start_timer(void) {
-  s_state.elapsed_accum = total_elapsed();
+  int32_t now = now_seconds();              /* one read: run start & vibe epoch stay aligned */
+  s_state.elapsed_accum = total_elapsed();  /* read before running flips true */
   s_state.running = true;
-  s_state.run_started_epoch = now_seconds();
-  s_state.next_vibe_epoch = next_vibe_after(now_seconds());
+  s_state.run_started_epoch = now;
+  s_state.next_vibe_epoch = next_vibe_after(now);
   s_frozen_cycle_elapsed = 0;
+  /* Subscribe the second-tick and paint 00:00 FIRST so the very first RTC
+   * boundary is always caught and the opening frame is instant; the crisp start
+   * vibe and the flash write follow. The app glance is launcher-only (not
+   * visible in the foreground) -- refreshed on exit (deinit), wakeup-launch, and
+   * stop transitions -- so no reload here on the latency-sensitive start path. */
+  apply_tick_unit();
+  update_ui();
   vibes_enqueue_custom_pattern(s_start_vibe_pattern);
   state_save();
-  apply_tick_unit();
-  update_app_glance_safe();
-  update_ui();
 }
 
 static void pause_timer(void) {
@@ -688,14 +693,15 @@ static void resume_timer(void) {
   if (left > interval || left == 0) {
     left = interval;
   }
-  s_state.elapsed_accum = total_elapsed();
+  int32_t now = now_seconds();              /* one read: run start & vibe epoch stay aligned */
+  s_state.elapsed_accum = total_elapsed();  /* read before running flips true */
   s_state.running = true;
-  s_state.run_started_epoch = now_seconds();
-  s_state.next_vibe_epoch = now_seconds() + left;
-  state_save();
+  s_state.run_started_epoch = now;
+  s_state.next_vibe_epoch = now + left;
+  /* Same lean ordering as start_timer: tick + first paint, then persist. */
   apply_tick_unit();
-  update_app_glance_safe();
   update_ui();
+  state_save();
 }
 
 static void apply_interval(int32_t total_seconds) {
@@ -1089,10 +1095,11 @@ static void init(void) {
 #if !REMEMBER_INTERVAL
       s_state.interval_seconds = g_default_interval;
 #endif
+      int32_t now = now_seconds();   /* one read: run start & vibe epoch stay aligned */
       s_state.running = true;
       s_state.elapsed_accum = 0;
-      s_state.run_started_epoch = now_seconds();
-      s_state.next_vibe_epoch = next_vibe_after(now_seconds());
+      s_state.run_started_epoch = now;
+      s_state.next_vibe_epoch = next_vibe_after(now);
       s_frozen_cycle_elapsed = 0;
       vibes_enqueue_custom_pattern(s_start_vibe_pattern);
       state_save();
