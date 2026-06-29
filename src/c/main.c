@@ -611,9 +611,12 @@ static void fire_vibe(void) {
   }
   s_state.next_vibe_epoch = base + (diff / interval + 1) * interval;
   /* Only next_vibe_epoch changed here; write just that key instead of the whole
-   * state to spare flash writes on short intervals. */
+   * state to spare flash writes on short intervals. The app glance is NOT
+   * reloaded per vibe -- it is launcher-only (invisible while we are in the
+   * foreground), so a reload every interval is wasted flash/CPU/battery and a
+   * periodic jank source. It is refreshed where it actually shows: on state
+   * transitions, on a wakeup-launch (init), and once on app exit (deinit). */
   persist_write_int(PERSIST_NEXT_VIBE_EPOCH, s_state.next_vibe_epoch);
-  update_app_glance_safe();
 }
 
 static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
@@ -794,18 +797,30 @@ static void commit_edit_and_run(void) {
   autoroll_stop();
   cancel_edit_timeout();
   int32_t total = s_edit_min * 60 + s_edit_sec;
-  if (total != s_state.interval_seconds) {
-    apply_interval(total);
-  }
-  s_mode = MODE_RUN;
-  apply_mode_layout();
+
   /* The central tick doubles as Start: confirming the interval from a
    * stopped/reset state (no progress) starts the timer straight away with the
    * crisp start vibe, so no extra UP/DOWN press is needed. A paused session
    * with progress is left for the user to resume explicitly. */
   if (!s_state.running && total_elapsed() == 0) {
+    /* Set the interval inline and let start_timer do the SINGLE state_save +
+     * app-glance reload + tick subscribe. Calling apply_interval() first would
+     * double the flash writes and glance reloads inside one button press,
+     * stalling the event loop just as the first RTC second-ticks land -- that
+     * burst made the opening seconds lag and skip before settling. */
+    s_state.interval_seconds = clamp_interval(total);
+    s_last_fill_h = -1;
+    s_mode = MODE_RUN;
+    apply_mode_layout();
     start_timer();
+    return;
   }
+
+  if (total != s_state.interval_seconds) {
+    apply_interval(total);
+  }
+  s_mode = MODE_RUN;
+  apply_mode_layout();
 }
 
 /* One step of the active edit field; dir = +1 (UP) / -1 (DOWN). Seconds move by
@@ -1092,6 +1107,9 @@ static void init(void) {
 }
 
 static void deinit(void) {
+  /* Snapshot the latest elapsed for the launcher glance as we leave (fire_vibe
+   * no longer reloads it each interval). */
+  update_app_glance_safe();
   if (s_state.running) {
     schedule_wakeup_for_next();
   }
