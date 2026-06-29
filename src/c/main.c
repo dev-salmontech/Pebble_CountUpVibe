@@ -3,7 +3,7 @@
 
 #define MAX_INTERVAL_SECONDS (99 * 60 + 59)
 #define EDIT_TIMEOUT_MS 15000
-#define AUTOROLL_DELAY_MS 3000     /* hold UP/DOWN this long in edit mode to auto-roll */
+#define AUTOROLL_DELAY_MS 2000     /* hold UP/DOWN this long in edit mode to auto-roll */
 #define AUTOROLL_INTERVAL_MS 110   /* roll speed once it kicks in */
 
 /* Factory defaults for the phone-configurable settings (Pebble app config page).
