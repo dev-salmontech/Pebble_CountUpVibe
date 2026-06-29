@@ -727,9 +727,12 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
   }
   settings_sanitize();
   settings_save();
-  if (sched_changed) {
-    /* Stateless model: adopt the new default as the live interval, re-clamped to
-     * the new minimum, which also re-syncs the vibration schedule. */
+  /* Adopt the new default as the live interval (re-clamped to the new minimum,
+   * which re-syncs the vibe schedule) ONLY from a no-progress state -- stopped,
+   * reset, or freshly launched all have elapsed == 0. A running or paused session
+   * with progress keeps its on-watch interval; the new default still takes effect
+   * at the next fresh start / launch. */
+  if (sched_changed && total_elapsed() == 0) {
     apply_interval(g_default_interval);
   }
   if (color_changed && s_water_layer) {
