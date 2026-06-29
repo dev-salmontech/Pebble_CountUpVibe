@@ -3,6 +3,8 @@
 
 #define MAX_INTERVAL_SECONDS (99 * 60 + 59)
 #define EDIT_TIMEOUT_MS 15000
+#define AUTOROLL_DELAY_MS 3000     /* hold UP/DOWN this long in edit mode to auto-roll */
+#define AUTOROLL_INTERVAL_MS 110   /* roll speed once it kicks in */
 
 /* Factory defaults for the phone-configurable settings (Pebble app config page).
  * The live values are the g_* globals, loaded from persist / set via AppMessage. */
@@ -56,6 +58,8 @@ static TextLayer *s_c_timer_layer;
 static TextLayer *s_b_timer_layer;
 static TextLayer *s_b_interval_layer;
 static AppTimer *s_edit_timeout;
+static AppTimer *s_autoroll_timer;
+static int s_autoroll_dir;          /* +1 / -1 while auto-rolling, 0 otherwise */
 static TimerState s_state;
 static int32_t s_frozen_cycle_elapsed;
 
@@ -128,6 +132,7 @@ static void apply_mode_layout(void);
 static void update_edit_display(void);
 static void update_button_labels(void);
 static void edit_timeout_handler(void *context);
+static void autoroll_stop(void);
 
 static int32_t clamp_interval(int32_t interval_seconds) {
   if (interval_seconds < g_min_step) {
@@ -756,6 +761,7 @@ static void cancel_edit_timeout(void) {
 
 static void edit_timeout_handler(void *context) {
   s_edit_timeout = NULL;
+  autoroll_stop();
   int32_t total = s_edit_min * 60 + s_edit_sec;
   if (total != s_state.interval_seconds) {
     apply_interval(total);
@@ -776,7 +782,16 @@ static void enter_edit_mode(void) {
   reset_edit_timeout();
 }
 
+static void autoroll_stop(void) {
+  s_autoroll_dir = 0;
+  if (s_autoroll_timer) {
+    app_timer_cancel(s_autoroll_timer);
+    s_autoroll_timer = NULL;
+  }
+}
+
 static void commit_edit_and_run(void) {
+  autoroll_stop();
   cancel_edit_timeout();
   int32_t total = s_edit_min * 60 + s_edit_sec;
   if (total != s_state.interval_seconds) {
@@ -786,15 +801,46 @@ static void commit_edit_and_run(void) {
   apply_mode_layout();
 }
 
+/* One step of the active edit field; dir = +1 (UP) / -1 (DOWN). Seconds move by
+ * the configured step, minutes by 1; both wrap. Shared by taps and auto-roll. */
+static void edit_adjust(int dir) {
+  if (s_edit_field == FIELD_MIN) {
+    s_edit_min = (s_edit_min + (dir > 0 ? 1 : 99)) % 100;
+  } else if (dir > 0) {
+    s_edit_sec = (s_edit_sec + g_min_step) % 60;
+  } else {
+    s_edit_sec = (s_edit_sec + (60 - g_min_step)) % 60;
+  }
+  update_edit_display();
+  reset_edit_timeout();
+}
+
+static void autoroll_tick(void *context) {
+  s_autoroll_timer = NULL;
+  if (s_mode != MODE_EDIT || s_autoroll_dir == 0) {
+    return;
+  }
+  edit_adjust(s_autoroll_dir);
+  s_autoroll_timer = app_timer_register(AUTOROLL_INTERVAL_MS, autoroll_tick, NULL);
+}
+
+/* Long-press (held AUTOROLL_DELAY_MS) in edit mode starts the auto-roll; release
+ * stops it. A short tap never reaches here -- the single-click handler fires. */
+static void autoroll_start(int dir) {
+  if (s_mode != MODE_EDIT) {
+    return;
+  }
+  s_autoroll_dir = dir;
+  if (s_autoroll_timer) {
+    app_timer_cancel(s_autoroll_timer);
+    s_autoroll_timer = NULL;
+  }
+  autoroll_tick(NULL);
+}
+
 static void up_click_handler(ClickRecognizerRef recognizer, void *context) {
   if (s_mode == MODE_EDIT) {
-    if (s_edit_field == FIELD_MIN) {
-      s_edit_min = (s_edit_min + 1) % 100;
-    } else {
-      s_edit_sec = (s_edit_sec + g_min_step) % 60;
-    }
-    update_edit_display();
-    reset_edit_timeout();
+    edit_adjust(+1);
   } else {
     if (s_state.running) {
       pause_timer();
@@ -809,13 +855,7 @@ static void up_click_handler(ClickRecognizerRef recognizer, void *context) {
 
 static void down_click_handler(ClickRecognizerRef recognizer, void *context) {
   if (s_mode == MODE_EDIT) {
-    if (s_edit_field == FIELD_MIN) {
-      s_edit_min = (s_edit_min + 99) % 100;
-    } else {
-      s_edit_sec = (s_edit_sec + (60 - g_min_step)) % 60;
-    }
-    update_edit_display();
-    reset_edit_timeout();
+    edit_adjust(-1);
   } else {
     if (s_state.running || total_elapsed() > 0) {
       reset_timer();
@@ -824,6 +864,18 @@ static void down_click_handler(ClickRecognizerRef recognizer, void *context) {
     }
     update_button_labels();
   }
+}
+
+static void up_long_down_handler(ClickRecognizerRef recognizer, void *context) {
+  autoroll_start(+1);
+}
+
+static void down_long_down_handler(ClickRecognizerRef recognizer, void *context) {
+  autoroll_start(-1);
+}
+
+static void long_up_handler(ClickRecognizerRef recognizer, void *context) {
+  autoroll_stop();
 }
 
 static void center_click_handler(ClickRecognizerRef recognizer, void *context) {
@@ -845,6 +897,10 @@ static void click_config_provider(void *context) {
   window_single_click_subscribe(BUTTON_ID_UP, up_click_handler);
   window_single_click_subscribe(BUTTON_ID_SELECT, center_click_handler);
   window_single_click_subscribe(BUTTON_ID_DOWN, down_click_handler);
+  /* Hold UP/DOWN to auto-roll the edit fields (guarded to edit mode in the
+   * handlers). A short tap fires the single-click handler instead. */
+  window_long_click_subscribe(BUTTON_ID_UP, AUTOROLL_DELAY_MS, up_long_down_handler, long_up_handler);
+  window_long_click_subscribe(BUTTON_ID_DOWN, AUTOROLL_DELAY_MS, down_long_down_handler, long_up_handler);
 }
 
 static TextLayer *make_label(Layer *parent, GRect frame, GTextAlignment align, const char *font_key, GColor color) {
@@ -924,6 +980,7 @@ static void main_window_load(Window *window) {
 
 static void main_window_unload(Window *window) {
   tick_timer_service_unsubscribe();
+  autoroll_stop();
   cancel_edit_timeout();
   text_layer_destroy(s_b_interval_layer);
   text_layer_destroy(s_b_timer_layer);
