@@ -64,6 +64,15 @@ static int s_win_h;
 static GFont s_font_big;
 static GFont s_font_small;
 
+/* Centre count-up timer has two presentations swapped at the 1h mark: a big
+ * MM:SS (<1h) and a smaller HH:MM:SS (>=1h) that still clears the centre glyph.
+ * Both sized per screen width at window load; box height tracks the font. */
+static GFont s_timer_font_long;
+static GFont s_timer_font_short;
+static GRect s_timer_frame_long;
+static GRect s_timer_frame_short;
+static int s_timer_form;  /* -1 unset, 0 short (MM:SS), 1 long (HH:MM:SS) */
+
 /* Glyph triangles, cached once and translated per draw to avoid per-frame
  * heap churn in the render path. Points are relative to the glyph centre. */
 static GPoint s_pts_play[3]  = {{-4, -6}, {-4, 6}, {6, 0}};
@@ -160,12 +169,17 @@ static void format_elapsed(int32_t elapsed_seconds, char *buffer, size_t buffer_
   if (elapsed_seconds < 0) {
     elapsed_seconds = 0;
   }
-  /* Count up as a 24h clock: 00:00:00 -> 23:59:59 -> rolls back to 00:00:00. */
+  /* Count up as a 24h clock: rolls back to 0 after 23:59:59. Show MM:SS until the
+   * first hour, then HH:MM:SS -- so the sub-hour case can use a bigger font. */
   elapsed_seconds %= 86400;
   int32_t hours = elapsed_seconds / 3600;
   int32_t minutes = (elapsed_seconds / 60) % 60;
   int32_t seconds = elapsed_seconds % 60;
-  snprintf(buffer, buffer_size, "%02ld:%02ld:%02ld", (long)hours, (long)minutes, (long)seconds);
+  if (hours > 0) {
+    snprintf(buffer, buffer_size, "%02ld:%02ld:%02ld", (long)hours, (long)minutes, (long)seconds);
+  } else {
+    snprintf(buffer, buffer_size, "%02ld:%02ld", (long)minutes, (long)seconds);
+  }
 }
 
 static void format_mmss(int32_t total_seconds, char *buffer, size_t buffer_size) {
@@ -491,6 +505,19 @@ static void apply_mode_layout(void) {
   update_ui();
 }
 
+/* Swap the centre timer between the big MM:SS and the smaller HH:MM:SS font/box
+ * at the 1h boundary. Guarded so the font/frame only change on the crossing. */
+static void set_central_form(bool long_form) {
+  int form = long_form ? 1 : 0;
+  if (form == s_timer_form || !s_c_timer_layer) {
+    return;
+  }
+  s_timer_form = form;
+  layer_set_frame(text_layer_get_layer(s_c_timer_layer),
+                  long_form ? s_timer_frame_long : s_timer_frame_short);
+  text_layer_set_font(s_c_timer_layer, long_form ? s_timer_font_long : s_timer_font_short);
+}
+
 static void update_ui(void) {
   update_clock_text();
 
@@ -505,6 +532,7 @@ static void update_ui(void) {
 
   format_elapsed(elapsed, s_timer_text, sizeof(s_timer_text));
   format_mmss(s_state.interval_seconds, s_interval_text, sizeof(s_interval_text));
+  set_central_form((elapsed % 86400) >= 3600);
 
   if (s_clock_layer && strcmp(s_clock_text, s_last_clock) != 0) {
     text_layer_set_text(s_clock_layer, s_clock_text);
@@ -791,26 +819,31 @@ static void main_window_load(Window *window) {
   s_status_layer = make_label(window_layer, GRect(0, 24, bounds.size.w, 20),
                               GTextAlignmentCenter, FONT_KEY_GOTHIC_18_BOLD, color_ink());
 
-  /* 8-char HH:MM:SS shares its row with the centre action glyph, so the biggest
-   * size that stays screen-centred without touching it depends on screen width:
-   * go large on emery/chalk, smaller on the 144px watches. Box height tracks the
-   * font so the number stays vertically centred on the glyph row. */
-  const char *timer_font_key;
-  int16_t timer_font_h;
-  if (bounds.size.w >= 200) {
-    timer_font_key = FONT_KEY_LECO_32_BOLD_NUMBERS;
-    timer_font_h = 32;
-  } else if (bounds.size.w >= 180) {
-    timer_font_key = FONT_KEY_LECO_26_BOLD_NUMBERS_AM_PM;
-    timer_font_h = 26;
-  } else {
-    timer_font_key = FONT_KEY_LECO_20_BOLD_NUMBERS;
-    timer_font_h = 20;
+  /* Centre timer shares its row with the centre action glyph, so the biggest font
+   * that stays screen-centred without touching it depends on both screen width
+   * AND the string length. The shorter MM:SS (<1h) fits a much bigger font than
+   * the 8-char HH:MM:SS (>=1h). Pick both per width; box height tracks the font so
+   * the number stays vertically centred on the glyph row. */
+  const char *long_key, *short_key;
+  int16_t long_h, short_h;
+  if (bounds.size.w >= 200) {          /* emery */
+    long_key = FONT_KEY_LECO_32_BOLD_NUMBERS;       long_h = 32;
+    short_key = FONT_KEY_LECO_42_NUMBERS;           short_h = 42;
+  } else if (bounds.size.w >= 180) {   /* chalk */
+    long_key = FONT_KEY_LECO_26_BOLD_NUMBERS_AM_PM; long_h = 26;
+    short_key = FONT_KEY_LECO_42_NUMBERS;           short_h = 42;
+  } else {                             /* 144px */
+    long_key = FONT_KEY_LECO_20_BOLD_NUMBERS;       long_h = 20;
+    short_key = FONT_KEY_LECO_32_BOLD_NUMBERS;      short_h = 32;
   }
-  int16_t timer_box_h = timer_font_h + 2;
-  s_c_timer_layer = make_label(window_layer,
-                               GRect(0, s_center_y - timer_box_h / 2, bounds.size.w, timer_box_h),
-                               GTextAlignmentCenter, timer_font_key, color_ink());
+  int16_t long_box_h = long_h + 2, short_box_h = short_h + 2;
+  s_timer_font_long  = fonts_get_system_font(long_key);
+  s_timer_font_short = fonts_get_system_font(short_key);
+  s_timer_frame_long  = GRect(0, s_center_y - long_box_h / 2,  bounds.size.w, long_box_h);
+  s_timer_frame_short = GRect(0, s_center_y - short_box_h / 2, bounds.size.w, short_box_h);
+  s_timer_form = -1;  /* force set_central_form to apply the right one on first update */
+  s_c_timer_layer = make_label(window_layer, s_timer_frame_short,
+                               GTextAlignmentCenter, short_key, color_ink());
 
   s_b_timer_layer = make_label(window_layer, GRect(0, bounds.size.h - 32, bounds.size.w, 26),
                                GTextAlignmentCenter, FONT_KEY_LECO_26_BOLD_NUMBERS_AM_PM, color_ink());
