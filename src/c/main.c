@@ -437,7 +437,9 @@ static void deco_update_proc(Layer *layer, GContext *ctx) {
     graphics_draw_text(ctx, s_min_buf, s_font_big, GRect(0, min_y - 4, w, vh),
                        GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
     graphics_context_set_text_color(ctx, (s_edit_field == FIELD_SEC) ? GColorWhite : color_ink());
-    graphics_draw_text(ctx, s_sec_buf, s_font_big, GRect(0, sec_y - 4, w, vh),
+    /* Seconds value sits low in its box (mirroring how the minutes value hugs
+     * the MINS label above) so SECS is the same distance from its number. */
+    graphics_draw_text(ctx, s_sec_buf, s_font_big, GRect(0, sec_y + 5, w, vh),
                        GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
   }
 }
@@ -797,8 +799,10 @@ static void main_window_load(Window *window) {
   s_status_layer = make_label(window_layer, GRect(0, 24, bounds.size.w, 20),
                               GTextAlignmentCenter, FONT_KEY_GOTHIC_18_BOLD, color_ink());
 
-  s_c_timer_layer = make_label(window_layer, GRect(0, s_center_y - 22, bounds.size.w, 44),
-                               GTextAlignmentCenter, FONT_KEY_LECO_42_NUMBERS, color_ink());
+  /* 8-char HH:MM:SS no longer fits LECO_42 at full width; use a size that fits
+   * and keep clear of the right-hand action glyph column. */
+  s_c_timer_layer = make_label(window_layer, GRect(0, s_center_y - 18, bounds.size.w - 26, 36),
+                               GTextAlignmentCenter, FONT_KEY_LECO_26_BOLD_NUMBERS_AM_PM, color_ink());
 
   s_b_timer_layer = make_label(window_layer, GRect(0, bounds.size.h - 32, bounds.size.w, 26),
                                GTextAlignmentCenter, FONT_KEY_LECO_26_BOLD_NUMBERS_AM_PM, color_ink());
