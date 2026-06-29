@@ -133,6 +133,7 @@ static void update_edit_display(void);
 static void update_button_labels(void);
 static void edit_timeout_handler(void *context);
 static void autoroll_stop(void);
+static void enter_edit_mode(void);
 
 static int32_t clamp_interval(int32_t interval_seconds) {
   if (interval_seconds < g_min_step) {
@@ -750,6 +751,14 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
    * at the next fresh start / launch. */
   if (sched_changed && total_elapsed() == 0) {
     apply_interval(g_default_interval);
+    /* If the editor is open on this fresh session (the default-launch editor, or
+     * right after a reinstall when the phone re-pushes the retained config),
+     * re-snap its working min/sec to the just-arrived default interval and
+     * min-step grid -- otherwise the stale on-screen value would overwrite the
+     * freshly restored setting on the next SELECT. */
+    if (s_mode == MODE_EDIT) {
+      enter_edit_mode();
+    }
   }
   if (color_changed && s_water_layer) {
     layer_mark_dirty(s_water_layer);

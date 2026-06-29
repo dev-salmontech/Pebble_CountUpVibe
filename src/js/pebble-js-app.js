@@ -56,6 +56,13 @@ function loadSettings() {
   };
 }
 
+function sendSettings(s) {
+  Pebble.sendAppMessage(
+    { 'INTERVAL_DEFAULT': s.interval, 'MIN_STEP': s.step, 'WATER_COLOR': s.color },
+    function () {}, function () {}
+  );
+}
+
 function hex(v) { return '#' + ('000000' + (v >>> 0).toString(16)).slice(-6); }
 
 function buildHtml(cur) {
@@ -145,8 +152,13 @@ Pebble.addEventListener('webviewclosed', function (e) {
 
   localStorage.setItem('cuv_settings', JSON.stringify({ interval: interval, step: step, color: color }));
 
-  Pebble.sendAppMessage(
-    { 'INTERVAL_DEFAULT': interval, 'MIN_STEP': step, 'WATER_COLOR': color },
-    function () {}, function () {}
-  );
+  sendSettings({ interval: interval, step: step, color: color });
+});
+
+Pebble.addEventListener('ready', function () {
+  /* Push the phone's retained config to the watch on every launch. A watch app
+   * update/reinstall wipes the watch's persisted settings, so without this the
+   * watch would fall back to factory defaults; the phone's localStorage copy
+   * survives, so this restores the user's saved preferences automatically. */
+  sendSettings(loadSettings());
 });
