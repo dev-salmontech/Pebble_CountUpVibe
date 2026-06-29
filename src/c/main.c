@@ -642,13 +642,14 @@ static void start_timer(void) {
   s_state.next_vibe_epoch = next_vibe_after(now);
   s_frozen_cycle_elapsed = 0;
   /* Subscribe the second-tick and paint 00:00 FIRST so the very first RTC
-   * boundary is always caught and the opening frame is instant; the crisp start
-   * vibe and the flash write follow. The app glance is launcher-only (not
-   * visible in the foreground) -- refreshed on exit (deinit), wakeup-launch, and
-   * stop transitions -- so no reload here on the latency-sensitive start path. */
+   * boundary is always caught and the opening frame is instant; the vibe, the
+   * launcher-glance reload, and the flash write all follow the paint so they
+   * can't delay frame 0. (The glance still refreshes on every transition -- it's
+   * just sequenced after the visible work.) */
   apply_tick_unit();
   update_ui();
   vibes_enqueue_custom_pattern(s_start_vibe_pattern);
+  update_app_glance_safe();
   state_save();
 }
 
@@ -698,9 +699,10 @@ static void resume_timer(void) {
   s_state.running = true;
   s_state.run_started_epoch = now;
   s_state.next_vibe_epoch = now + left;
-  /* Same lean ordering as start_timer: tick + first paint, then persist. */
+  /* Same ordering as start_timer: tick + first paint, then glance + persist. */
   apply_tick_unit();
   update_ui();
+  update_app_glance_safe();
   state_save();
 }
 
