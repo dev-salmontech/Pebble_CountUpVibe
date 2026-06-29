@@ -22,7 +22,6 @@ enum {
   PERSIST_RUN_STARTED = 4,
   PERSIST_INTERVAL = 5,
   PERSIST_NEXT_VIBE_EPOCH = 6,
-  PERSIST_VIBE_COUNT = 7,
   PERSIST_FROZEN_CYCLE = 8
 };
 
@@ -35,7 +34,6 @@ typedef struct {
   int32_t run_started_epoch;
   int32_t interval_seconds;
   int32_t next_vibe_epoch;
-  int32_t vibe_count;
 } TimerState;
 
 static Window *s_main_window;
@@ -46,12 +44,8 @@ static TextLayer *s_status_layer;
 static TextLayer *s_c_timer_layer;
 static TextLayer *s_b_timer_layer;
 static TextLayer *s_b_interval_layer;
-static TextLayer *s_btn_up_layer;
-static TextLayer *s_btn_center_layer;
-static TextLayer *s_btn_down_layer;
 static AppTimer *s_edit_timeout;
 static TimerState s_state;
-static bool s_launched_by_wakeup;
 static int32_t s_frozen_cycle_elapsed;
 static int s_mode;
 static int s_edit_field;
@@ -94,9 +88,6 @@ static char s_timer_text[16];
 static char s_interval_text[12];
 static char s_min_buf[8];
 static char s_sec_buf[8];
-static char s_btn_up_text[16];
-static char s_btn_center_text[16];
-static char s_btn_down_text[16];
 static char s_glance_text[96];
 static char s_last_clock[16];
 static char s_last_status[16];
@@ -226,7 +217,6 @@ static void state_save(void) {
   persist_write_int(PERSIST_RUN_STARTED, s_state.run_started_epoch);
   persist_write_int(PERSIST_INTERVAL, s_state.interval_seconds);
   persist_write_int(PERSIST_NEXT_VIBE_EPOCH, s_state.next_vibe_epoch);
-  persist_write_int(PERSIST_VIBE_COUNT, s_state.vibe_count);
   persist_write_int(PERSIST_FROZEN_CYCLE, s_frozen_cycle_elapsed);
 }
 
@@ -239,7 +229,6 @@ static void state_load_or_default(void) {
     s_state.run_started_epoch = 0;
     s_state.interval_seconds = DEFAULT_INTERVAL_SECONDS;
     s_state.next_vibe_epoch = 0;
-    s_state.vibe_count = 0;
     s_frozen_cycle_elapsed = 0;
     state_save();
     return;
@@ -254,7 +243,6 @@ static void state_load_or_default(void) {
   }
   s_state.interval_seconds = clamp_interval(s_state.interval_seconds);
   s_state.next_vibe_epoch = persist_read_int(PERSIST_NEXT_VIBE_EPOCH);
-  s_state.vibe_count = persist_read_int(PERSIST_VIBE_COUNT);
   s_frozen_cycle_elapsed = persist_read_int(PERSIST_FROZEN_CYCLE);
 }
 
@@ -399,12 +387,6 @@ static int16_t compute_live_fill_height(int16_t h) {
   return (int16_t)fh;
 }
 
-static int16_t compute_fill_height(int16_t h) {
-  /* Live in every mode: the water keeps draining while the timer runs (even in
-   * edit mode); when paused, compute_live_fill_height holds the frozen cycle. */
-  return compute_live_fill_height(h);
-}
-
 /* The water layer's frame IS the water rectangle (bottom-anchored, height =
  * fill). It just paints itself solid; the area it vacates falls back to the
  * white window background, so only the changed strip ever repaints. */
@@ -468,20 +450,9 @@ static void update_edit_display(void) {
   }
 }
 
+/* Button hints are glyphs drawn in deco_update_proc; just trigger its redraw when
+ * the state that selects them (mode / running / active field) changes. */
 static void update_button_labels(void) {
-  s_btn_up_text[0] = '\0';
-  s_btn_center_text[0] = '\0';
-  s_btn_down_text[0] = '\0';
-
-  if (s_btn_up_layer) {
-    text_layer_set_text(s_btn_up_layer, s_btn_up_text);
-  }
-  if (s_btn_center_layer) {
-    text_layer_set_text(s_btn_center_layer, s_btn_center_text);
-  }
-  if (s_btn_down_layer) {
-    text_layer_set_text(s_btn_down_layer, s_btn_down_text);
-  }
   if (s_deco_layer) {
     layer_mark_dirty(s_deco_layer);
   }
@@ -554,7 +525,9 @@ static void update_ui(void) {
   }
 
   if (s_water_layer) {
-    int16_t fh = compute_fill_height(s_win_h);
+    /* Live in every mode: water keeps draining while running (even in edit); when
+     * paused, compute_live_fill_height holds the frozen cycle. */
+    int16_t fh = compute_live_fill_height(s_win_h);
     if (fh != s_last_fill_h) {
       s_last_fill_h = fh;
       /* Resizing the frame dirties only the old+new strip; the rest stays. */
@@ -575,14 +548,15 @@ static void fire_vibe(void) {
   int32_t base = s_state.next_vibe_epoch;
 
   vibes_enqueue_custom_pattern(s_vibe_pattern);
-  s_state.vibe_count += 1;
 
   int32_t diff = now - base;
   if (diff < 0) {
     diff = 0;
   }
   s_state.next_vibe_epoch = base + (diff / interval + 1) * interval;
-  state_save();
+  /* Only next_vibe_epoch changed here; write just that key instead of the whole
+   * state to spare flash writes on short intervals. */
+  persist_write_int(PERSIST_NEXT_VIBE_EPOCH, s_state.next_vibe_epoch);
   update_app_glance_safe();
 }
 
@@ -636,7 +610,6 @@ static void reset_timer(void) {
   s_state.elapsed_accum = 0;
   s_state.run_started_epoch = 0;
   s_state.next_vibe_epoch = 0;
-  s_state.vibe_count = 0;
   s_frozen_cycle_elapsed = 0;
   state_save();
   cancel_pending_wakeup();
@@ -850,14 +823,6 @@ static void main_window_load(Window *window) {
   s_b_interval_layer = make_label(window_layer, GRect(0, bounds.size.h - 32, bounds.size.w, 26),
                                   GTextAlignmentCenter, FONT_KEY_LECO_26_BOLD_NUMBERS_AM_PM, color_ink());
 
-  int16_t btn_x = bounds.size.w - 44;
-  s_btn_up_layer = make_label(window_layer, GRect(btn_x, 6, 40, 18),
-                              GTextAlignmentRight, FONT_KEY_GOTHIC_14_BOLD, color_ink());
-  s_btn_center_layer = make_label(window_layer, GRect(btn_x, s_center_y - 9, 40, 18),
-                                  GTextAlignmentRight, FONT_KEY_GOTHIC_14_BOLD, color_ink());
-  s_btn_down_layer = make_label(window_layer, GRect(btn_x, bounds.size.h - 26, 40, 18),
-                                GTextAlignmentRight, FONT_KEY_GOTHIC_14_BOLD, color_ink());
-
   apply_mode_layout();  /* also refreshes the UI (calls update_ui) */
 
   window_set_click_config_provider(window, click_config_provider);
@@ -867,9 +832,6 @@ static void main_window_load(Window *window) {
 static void main_window_unload(Window *window) {
   tick_timer_service_unsubscribe();
   cancel_edit_timeout();
-  text_layer_destroy(s_btn_down_layer);
-  text_layer_destroy(s_btn_center_layer);
-  text_layer_destroy(s_btn_up_layer);
   text_layer_destroy(s_b_interval_layer);
   text_layer_destroy(s_b_timer_layer);
   text_layer_destroy(s_c_timer_layer);
@@ -877,9 +839,6 @@ static void main_window_unload(Window *window) {
   text_layer_destroy(s_clock_layer);
   layer_destroy(s_deco_layer);
   layer_destroy(s_water_layer);
-  s_btn_down_layer = NULL;
-  s_btn_center_layer = NULL;
-  s_btn_up_layer = NULL;
   s_b_interval_layer = NULL;
   s_b_timer_layer = NULL;
   s_c_timer_layer = NULL;
@@ -918,9 +877,9 @@ static void init(void) {
 
   wakeup_service_subscribe(wakeup_handler);
 
-  s_launched_by_wakeup = (launch_reason() == APP_LAUNCH_WAKEUP);
+  bool launched_by_wakeup = (launch_reason() == APP_LAUNCH_WAKEUP);
 
-  if (s_launched_by_wakeup) {
+  if (launched_by_wakeup) {
     WakeupId id = 0;
     int32_t cookie = 0;
     wakeup_get_launch_event(&id, &cookie);
@@ -956,7 +915,6 @@ static void init(void) {
       s_state.elapsed_accum = 0;
       s_state.run_started_epoch = now_seconds();
       s_state.next_vibe_epoch = next_vibe_after(now_seconds());
-      s_state.vibe_count = 0;
       s_frozen_cycle_elapsed = 0;
       vibes_enqueue_custom_pattern(s_start_vibe_pattern);
       state_save();
