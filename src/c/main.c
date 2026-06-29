@@ -162,14 +162,12 @@ static void format_elapsed(int32_t elapsed_seconds, char *buffer, size_t buffer_
   if (elapsed_seconds < 0) {
     elapsed_seconds = 0;
   }
+  /* Count up as a 24h clock: 00:00:00 -> 23:59:59 -> rolls back to 00:00:00. */
+  elapsed_seconds %= 86400;
   int32_t hours = elapsed_seconds / 3600;
   int32_t minutes = (elapsed_seconds / 60) % 60;
   int32_t seconds = elapsed_seconds % 60;
-  if (hours > 0) {
-    snprintf(buffer, buffer_size, "%ld:%02ld:%02ld", (long)hours, (long)minutes, (long)seconds);
-  } else {
-    snprintf(buffer, buffer_size, "%ld:%02ld", (long)minutes, (long)seconds);
-  }
+  snprintf(buffer, buffer_size, "%02ld:%02ld:%02ld", (long)hours, (long)minutes, (long)seconds);
 }
 
 static void format_mmss(int32_t total_seconds, char *buffer, size_t buffer_size) {
