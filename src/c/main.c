@@ -488,6 +488,9 @@ static void apply_mode_layout(void) {
   }
   update_edit_display();
   update_button_labels();
+  /* Refresh now so the layer that just became visible (e.g. the centre timer on
+   * Edit->Run) shows its text immediately instead of waiting for the next tick. */
+  update_ui();
 }
 
 static void update_ui(void) {
@@ -567,9 +570,23 @@ static void ui_tick_handler(void *context) {
 }
 
 static void schedule_ui_tick(void) {
-  if (!s_ui_timer) {
-    s_ui_timer = app_timer_register(1000, ui_tick_handler, NULL);
+  if (s_ui_timer) {
+    return;
   }
+  /* Only the running timer needs a 1s loop (elapsed, water drain, vibe check).
+   * When paused/READY nothing changes but the clock, so wake just once at the
+   * next minute boundary instead of 60x/min -- a real foreground battery win. */
+  uint32_t delay_ms = 1000;
+  if (!s_state.running) {
+    time_t now = time(NULL);
+    struct tm *tm = localtime(&now);
+    int sec_into_min = tm ? tm->tm_sec : 0;
+    delay_ms = (uint32_t)(60 - sec_into_min) * 1000;
+    if (delay_ms < 1000) {
+      delay_ms = 1000;
+    }
+  }
+  s_ui_timer = app_timer_register(delay_ms, ui_tick_handler, NULL);
 }
 
 static void cancel_ui_tick(void) {
@@ -831,8 +848,7 @@ static void main_window_load(Window *window) {
   s_btn_down_layer = make_label(window_layer, GRect(btn_x, bounds.size.h - 26, 40, 18),
                                 GTextAlignmentRight, FONT_KEY_GOTHIC_14_BOLD, color_ink());
 
-  apply_mode_layout();
-  update_ui();
+  apply_mode_layout();  /* also refreshes the UI (calls update_ui) */
 
   window_set_click_config_provider(window, click_config_provider);
   schedule_ui_tick();
