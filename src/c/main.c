@@ -1,14 +1,21 @@
 #include <pebble.h>
 #include <string.h>
 
-#define INTERVAL_GRID_SECONDS 15
-#define DEFAULT_INTERVAL_SECONDS (5 * 60)
-#define MIN_INTERVAL_SECONDS INTERVAL_GRID_SECONDS
 #define MAX_INTERVAL_SECONDS (99 * 60 + 59)
 #define EDIT_TIMEOUT_MS 15000
-#define SEC_STEP INTERVAL_GRID_SECONDS
 
-/* 0: every fresh launch starts at the 5 min default (stateless).
+/* Factory defaults for the phone-configurable settings (Pebble app config page).
+ * The live values are the g_* globals, loaded from persist / set via AppMessage. */
+#define DEFAULT_INTERVAL_DEFAULT (5 * 60)
+#define DEFAULT_MIN_STEP 15
+#define DEFAULT_WATER_COLOR_HEX 0x55AAFF
+
+/* AppMessage keys -- must match the indices in appinfo.json "appKeys". */
+#define MSG_INTERVAL_DEFAULT 0
+#define MSG_MIN_STEP 1
+#define MSG_WATER_COLOR 2
+
+/* 0: every fresh launch starts at the configured default (stateless).
  * 1: remember the last interval the user set across restarts.
  * Flip to 1 to switch behaviours. */
 #define REMEMBER_INTERVAL 0
@@ -22,7 +29,11 @@ enum {
   PERSIST_RUN_STARTED = 4,
   PERSIST_INTERVAL = 5,
   PERSIST_NEXT_VIBE_EPOCH = 6,
-  PERSIST_FROZEN_CYCLE = 8
+  PERSIST_FROZEN_CYCLE = 8,
+  /* Settings (separate range from the timer state above). */
+  PERSIST_SET_DEFAULT_INTERVAL = 20,
+  PERSIST_SET_MIN_STEP = 21,
+  PERSIST_SET_WATER_COLOR = 22
 };
 
 enum { MODE_EDIT, MODE_RUN };
@@ -47,6 +58,11 @@ static TextLayer *s_b_interval_layer;
 static AppTimer *s_edit_timeout;
 static TimerState s_state;
 static int32_t s_frozen_cycle_elapsed;
+
+/* Live, phone-configurable settings (see DEFAULT_* above). */
+static int32_t g_default_interval = DEFAULT_INTERVAL_DEFAULT;
+static int32_t g_min_step = DEFAULT_MIN_STEP;   /* seconds editor step + min interval */
+static uint32_t g_water_color_hex = DEFAULT_WATER_COLOR_HEX;
 static int s_mode;
 static int s_edit_field;
 static int32_t s_edit_min;
@@ -114,8 +130,8 @@ static void update_button_labels(void);
 static void edit_timeout_handler(void *context);
 
 static int32_t clamp_interval(int32_t interval_seconds) {
-  if (interval_seconds < MIN_INTERVAL_SECONDS) {
-    return MIN_INTERVAL_SECONDS;
+  if (interval_seconds < g_min_step) {
+    return g_min_step;
   }
   if (interval_seconds > MAX_INTERVAL_SECONDS) {
     return MAX_INTERVAL_SECONDS;
@@ -130,7 +146,7 @@ static int32_t now_seconds(void) {
 static int32_t next_vibe_after(int32_t t) {
   /* Relative to the moment the run/cycle starts (not clock-grid aligned) so a
    * fresh start always begins a full interval -> water starts at the top. */
-  int32_t interval = s_state.interval_seconds > 0 ? s_state.interval_seconds : INTERVAL_GRID_SECONDS;
+  int32_t interval = s_state.interval_seconds > 0 ? s_state.interval_seconds : g_min_step;
   return t + interval;
 }
 
@@ -220,6 +236,41 @@ static void state_save(void) {
   persist_write_int(PERSIST_FROZEN_CYCLE, s_frozen_cycle_elapsed);
 }
 
+static bool is_valid_step(int32_t v) {
+  return v == 1 || v == 5 || v == 10 || v == 15 || v == 20 || v == 30;
+}
+
+static void settings_sanitize(void) {
+  if (!is_valid_step(g_min_step)) {
+    g_min_step = DEFAULT_MIN_STEP;
+  }
+  if (g_default_interval < g_min_step) {
+    g_default_interval = g_min_step;
+  }
+  if (g_default_interval > MAX_INTERVAL_SECONDS) {
+    g_default_interval = MAX_INTERVAL_SECONDS;
+  }
+}
+
+static void settings_load(void) {
+  if (persist_exists(PERSIST_SET_DEFAULT_INTERVAL)) {
+    g_default_interval = persist_read_int(PERSIST_SET_DEFAULT_INTERVAL);
+  }
+  if (persist_exists(PERSIST_SET_MIN_STEP)) {
+    g_min_step = persist_read_int(PERSIST_SET_MIN_STEP);
+  }
+  if (persist_exists(PERSIST_SET_WATER_COLOR)) {
+    g_water_color_hex = (uint32_t)persist_read_int(PERSIST_SET_WATER_COLOR);
+  }
+  settings_sanitize();
+}
+
+static void settings_save(void) {
+  persist_write_int(PERSIST_SET_DEFAULT_INTERVAL, g_default_interval);
+  persist_write_int(PERSIST_SET_MIN_STEP, g_min_step);
+  persist_write_int(PERSIST_SET_WATER_COLOR, (int32_t)g_water_color_hex);
+}
+
 static void state_load_or_default(void) {
   if (!persist_exists(PERSIST_INITIALIZED)) {
     /* First ever launch: start in a READY (reset-to-zero) state so init's
@@ -227,7 +278,7 @@ static void state_load_or_default(void) {
     s_state.running = false;
     s_state.elapsed_accum = 0;
     s_state.run_started_epoch = 0;
-    s_state.interval_seconds = DEFAULT_INTERVAL_SECONDS;
+    s_state.interval_seconds = g_default_interval;
     s_state.next_vibe_epoch = 0;
     s_frozen_cycle_elapsed = 0;
     state_save();
@@ -239,7 +290,7 @@ static void state_load_or_default(void) {
   s_state.run_started_epoch = persist_read_int(PERSIST_RUN_STARTED);
   s_state.interval_seconds = persist_read_int(PERSIST_INTERVAL);
   if (s_state.interval_seconds == 0) {
-    s_state.interval_seconds = DEFAULT_INTERVAL_SECONDS;
+    s_state.interval_seconds = g_default_interval;
   }
   s_state.interval_seconds = clamp_interval(s_state.interval_seconds);
   s_state.next_vibe_epoch = persist_read_int(PERSIST_NEXT_VIBE_EPOCH);
@@ -269,9 +320,9 @@ static void schedule_wakeup_for_next(void) {
 
 static GColor color_water(void) {
 #ifdef PBL_COLOR
-  return GColorFromHEX(0x55AAFF);
+  return GColorFromHEX(g_water_color_hex);
 #else
-  return GColorLightGray;
+  return GColorLightGray;  /* B/W platforms ignore the colour setting */
 #endif
 }
 static GColor color_ink(void) {
@@ -544,7 +595,7 @@ static void fire_vibe(void) {
   if (now < s_state.next_vibe_epoch) {
     return;
   }
-  int32_t interval = s_state.interval_seconds > 0 ? s_state.interval_seconds : INTERVAL_GRID_SECONDS;
+  int32_t interval = s_state.interval_seconds > 0 ? s_state.interval_seconds : g_min_step;
   int32_t base = s_state.next_vibe_epoch;
 
   vibes_enqueue_custom_pattern(s_vibe_pattern);
@@ -650,6 +701,42 @@ static void apply_interval(int32_t total_seconds) {
   update_ui();
 }
 
+/* Phone config page -> watch. Each key is optional; apply only what arrived. */
+static void inbox_received_handler(DictionaryIterator *iter, void *context) {
+  bool sched_changed = false;  /* interval default or min step */
+  bool color_changed = false;
+
+  Tuple *t = dict_find(iter, MSG_MIN_STEP);
+  if (t && is_valid_step(t->value->int32)) {
+    g_min_step = t->value->int32;
+    sched_changed = true;
+  }
+  t = dict_find(iter, MSG_INTERVAL_DEFAULT);
+  if (t) {
+    g_default_interval = t->value->int32;
+    sched_changed = true;
+  }
+  t = dict_find(iter, MSG_WATER_COLOR);
+  if (t) {
+    g_water_color_hex = (uint32_t)t->value->int32;
+    color_changed = true;
+  }
+
+  if (!sched_changed && !color_changed) {
+    return;
+  }
+  settings_sanitize();
+  settings_save();
+  if (sched_changed) {
+    /* Stateless model: adopt the new default as the live interval, re-clamped to
+     * the new minimum, which also re-syncs the vibration schedule. */
+    apply_interval(g_default_interval);
+  }
+  if (color_changed && s_water_layer) {
+    layer_mark_dirty(s_water_layer);
+  }
+}
+
 static void reset_edit_timeout(void) {
   if (s_edit_timeout) {
     app_timer_cancel(s_edit_timeout);
@@ -678,7 +765,10 @@ static void enter_edit_mode(void) {
   s_mode = MODE_EDIT;
   s_edit_field = FIELD_MIN;
   s_edit_min = s_state.interval_seconds / 60;
-  s_edit_sec = s_state.interval_seconds % 60;
+  /* Snap the seconds onto the configured step grid so on-watch toggling stays in
+   * clean multiples (e.g. step 20 -> 0/20/40), even if the phone set an off-grid
+   * default. All allowed steps divide 60. */
+  s_edit_sec = ((s_state.interval_seconds % 60) / g_min_step) * g_min_step;
   apply_mode_layout();
   reset_edit_timeout();
 }
@@ -698,7 +788,7 @@ static void up_click_handler(ClickRecognizerRef recognizer, void *context) {
     if (s_edit_field == FIELD_MIN) {
       s_edit_min = (s_edit_min + 1) % 100;
     } else {
-      s_edit_sec = (s_edit_sec + SEC_STEP) % 60;
+      s_edit_sec = (s_edit_sec + g_min_step) % 60;
     }
     update_edit_display();
     reset_edit_timeout();
@@ -719,7 +809,7 @@ static void down_click_handler(ClickRecognizerRef recognizer, void *context) {
     if (s_edit_field == FIELD_MIN) {
       s_edit_min = (s_edit_min + 99) % 100;
     } else {
-      s_edit_sec = (s_edit_sec + (60 - SEC_STEP)) % 60;
+      s_edit_sec = (s_edit_sec + (60 - g_min_step)) % 60;
     }
     update_edit_display();
     reset_edit_timeout();
@@ -873,7 +963,11 @@ static void push_main_window(void) {
 }
 
 static void init(void) {
+  settings_load();        /* must precede state load: it seeds the default interval */
   state_load_or_default();
+
+  app_message_register_inbox_received(inbox_received_handler);
+  app_message_open(256, 64);
 
   wakeup_service_subscribe(wakeup_handler);
 
@@ -909,7 +1003,7 @@ static void init(void) {
        * cycle, so vibrations fire at the (default) interval until the user
        * changes it. Only the interval optionally persists (REMEMBER_INTERVAL). */
 #if !REMEMBER_INTERVAL
-      s_state.interval_seconds = DEFAULT_INTERVAL_SECONDS;
+      s_state.interval_seconds = g_default_interval;
 #endif
       s_state.running = true;
       s_state.elapsed_accum = 0;
