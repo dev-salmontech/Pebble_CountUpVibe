@@ -115,7 +115,11 @@ function buildHtml(cur) {
     'var step=parseInt(document.getElementById("step").value,10)||15;' +
     'var ss=readSec(step);' +
     'var out={interval:mm*60+ss,step:step,color:sel};' +
-    'location.href="pebblejs://close#"+encodeURIComponent(JSON.stringify(out));});' +
+    /* Phone webview uses pebblejs://close; the emulator passes a return_to
+       query param it intercepts -- honour it so config works in both. */
+    'var rt=(location.search.match(/[?&]return_to=([^&]+)/)||[])[1];' +
+    'rt=rt?decodeURIComponent(rt):"pebblejs://close#";' +
+    'location.href=rt+encodeURIComponent(JSON.stringify(out));});' +
     'renderSec(' + cur.step + ',' + ss + ');mark();' +
     '<\/script></body></html>';
 }

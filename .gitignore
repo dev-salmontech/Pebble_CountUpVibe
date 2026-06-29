@@ -25,3 +25,7 @@ tools/
 Screenshot*.png
 *.png
 !resources/**/*.png
+
+# Emulator config-test artifacts (Chrome blocks data: URIs; served via local http)
+config.html
+tools/gen-config-html.js
