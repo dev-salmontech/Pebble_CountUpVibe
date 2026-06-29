@@ -49,7 +49,6 @@ static TextLayer *s_b_interval_layer;
 static TextLayer *s_btn_up_layer;
 static TextLayer *s_btn_center_layer;
 static TextLayer *s_btn_down_layer;
-static AppTimer *s_ui_timer;
 static AppTimer *s_edit_timeout;
 static TimerState s_state;
 static bool s_launched_by_wakeup;
@@ -108,7 +107,6 @@ static const VibePattern s_start_vibe_pattern = {
 };
 
 static void update_ui(void);
-static void schedule_ui_tick(void);
 static void update_app_glance_safe(void);
 static void apply_mode_layout(void);
 static void update_edit_display(void);
@@ -560,40 +558,19 @@ static void fire_vibe(void) {
   update_app_glance_safe();
 }
 
-static void ui_tick_handler(void *context) {
-  s_ui_timer = NULL;
+static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
   update_ui();
   if (s_state.running && now_seconds() >= s_state.next_vibe_epoch) {
     fire_vibe();
   }
-  schedule_ui_tick();
 }
 
-static void schedule_ui_tick(void) {
-  if (s_ui_timer) {
-    return;
-  }
-  /* Only the running timer needs a 1s loop (elapsed, water drain, vibe check).
-   * When paused/READY nothing changes but the clock, so wake just once at the
-   * next minute boundary instead of 60x/min -- a real foreground battery win. */
-  uint32_t delay_ms = 1000;
-  if (!s_state.running) {
-    time_t now = time(NULL);
-    struct tm *tm = localtime(&now);
-    int sec_into_min = tm ? tm->tm_sec : 0;
-    delay_ms = (uint32_t)(60 - sec_into_min) * 1000;
-    if (delay_ms < 1000) {
-      delay_ms = 1000;
-    }
-  }
-  s_ui_timer = app_timer_register(delay_ms, ui_tick_handler, NULL);
-}
-
-static void cancel_ui_tick(void) {
-  if (s_ui_timer) {
-    app_timer_cancel(s_ui_timer);
-    s_ui_timer = NULL;
-  }
+/* Display tick = OS TickTimerService (RTC-aligned, fires on the real second/
+ * minute boundary). SECOND_UNIT while counting (elapsed, water drain, vibe
+ * check); MINUTE_UNIT when paused/READY where only the clock changes, so an idle
+ * foreground screen wakes once a minute, not 60x. Re-subscribing swaps the unit. */
+static void apply_tick_unit(void) {
+  tick_timer_service_subscribe(s_state.running ? SECOND_UNIT : MINUTE_UNIT, tick_handler);
 }
 
 static void start_timer(void) {
@@ -604,8 +581,7 @@ static void start_timer(void) {
   s_frozen_cycle_elapsed = 0;
   vibes_enqueue_custom_pattern(s_start_vibe_pattern);
   state_save();
-  cancel_ui_tick();
-  schedule_ui_tick();
+  apply_tick_unit();
   update_app_glance_safe();
   update_ui();
 }
@@ -622,6 +598,7 @@ static void pause_timer(void) {
   s_state.run_started_epoch = 0;
   state_save();
   cancel_pending_wakeup();
+  apply_tick_unit();
   update_app_glance_safe();
   update_ui();
 }
@@ -635,6 +612,7 @@ static void reset_timer(void) {
   s_frozen_cycle_elapsed = 0;
   state_save();
   cancel_pending_wakeup();
+  apply_tick_unit();
   update_app_glance_safe();
   update_ui();
 }
@@ -655,8 +633,7 @@ static void resume_timer(void) {
   s_state.run_started_epoch = now_seconds();
   s_state.next_vibe_epoch = now_seconds() + left;
   state_save();
-  cancel_ui_tick();
-  schedule_ui_tick();
+  apply_tick_unit();
   update_app_glance_safe();
   update_ui();
 }
@@ -851,11 +828,11 @@ static void main_window_load(Window *window) {
   apply_mode_layout();  /* also refreshes the UI (calls update_ui) */
 
   window_set_click_config_provider(window, click_config_provider);
-  schedule_ui_tick();
+  apply_tick_unit();
 }
 
 static void main_window_unload(Window *window) {
-  cancel_ui_tick();
+  tick_timer_service_unsubscribe();
   cancel_edit_timeout();
   text_layer_destroy(s_btn_down_layer);
   text_layer_destroy(s_btn_center_layer);
@@ -918,7 +895,7 @@ static void init(void) {
     s_mode = MODE_RUN;
     s_edit_field = FIELD_MIN;
     push_main_window();
-    schedule_ui_tick();
+    apply_tick_unit();
     update_app_glance_safe();
   } else {
     /* Manual launch (foreground). If a timer session is still active -- either
@@ -933,7 +910,7 @@ static void init(void) {
       s_mode = MODE_RUN;
       s_edit_field = FIELD_MIN;
       push_main_window();
-      schedule_ui_tick();
+      apply_tick_unit();
       update_app_glance_safe();
     } else {
       /* Default: open the editor with the timer already running from a full
@@ -954,7 +931,7 @@ static void init(void) {
       s_edit_field = FIELD_MIN;
       push_main_window();
       enter_edit_mode();
-      schedule_ui_tick();
+      apply_tick_unit();
       update_app_glance_safe();
     }
   }
