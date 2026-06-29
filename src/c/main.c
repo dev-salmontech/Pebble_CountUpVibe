@@ -3,7 +3,7 @@
 
 #define MAX_INTERVAL_SECONDS (99 * 60 + 59)
 #define EDIT_TIMEOUT_MS 15000
-#define AUTOROLL_DELAY_MS 2000     /* hold UP/DOWN this long in edit mode to auto-roll */
+#define AUTOROLL_DELAY_MS 1500     /* hold UP/DOWN this long in edit mode to auto-roll */
 #define AUTOROLL_INTERVAL_MS 110   /* roll speed once it kicks in */
 
 /* Factory defaults for the phone-configurable settings (Pebble app config page).
@@ -799,6 +799,13 @@ static void commit_edit_and_run(void) {
   }
   s_mode = MODE_RUN;
   apply_mode_layout();
+  /* The central tick doubles as Start: confirming the interval from a
+   * stopped/reset state (no progress) starts the timer straight away with the
+   * crisp start vibe, so no extra UP/DOWN press is needed. A paused session
+   * with progress is left for the user to resume explicitly. */
+  if (!s_state.running && total_elapsed() == 0) {
+    start_timer();
+  }
 }
 
 /* One step of the active edit field; dir = +1 (UP) / -1 (DOWN). Seconds move by
