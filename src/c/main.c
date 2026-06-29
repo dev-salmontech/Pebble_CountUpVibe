@@ -1027,7 +1027,9 @@ static void init(void) {
   state_load_or_default();
 
   app_message_register_inbox_received(inbox_received_handler);
-  app_message_open(256, 64);
+  /* Inbox holds the 3 settings keys; outbox is minimal -- the watch only
+   * receives config, it never sends an AppMessage. */
+  app_message_open(256, 16);
 
   wakeup_service_subscribe(wakeup_handler);
 
