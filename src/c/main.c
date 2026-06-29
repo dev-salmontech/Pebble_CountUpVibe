@@ -797,10 +797,26 @@ static void main_window_load(Window *window) {
   s_status_layer = make_label(window_layer, GRect(0, 24, bounds.size.w, 20),
                               GTextAlignmentCenter, FONT_KEY_GOTHIC_18_BOLD, color_ink());
 
-  /* 8-char HH:MM:SS shares the row with the centre action glyph; LECO_20 is the
-   * largest size that stays screen-centred (full width) without touching it. */
-  s_c_timer_layer = make_label(window_layer, GRect(0, s_center_y - 14, bounds.size.w, 28),
-                               GTextAlignmentCenter, FONT_KEY_LECO_20_BOLD_NUMBERS, color_ink());
+  /* 8-char HH:MM:SS shares its row with the centre action glyph, so the biggest
+   * size that stays screen-centred without touching it depends on screen width:
+   * go large on emery/chalk, smaller on the 144px watches. Box height tracks the
+   * font so the number stays vertically centred on the glyph row. */
+  const char *timer_font_key;
+  int16_t timer_font_h;
+  if (bounds.size.w >= 200) {
+    timer_font_key = FONT_KEY_LECO_32_BOLD_NUMBERS;
+    timer_font_h = 32;
+  } else if (bounds.size.w >= 180) {
+    timer_font_key = FONT_KEY_LECO_26_BOLD_NUMBERS_AM_PM;
+    timer_font_h = 26;
+  } else {
+    timer_font_key = FONT_KEY_LECO_20_BOLD_NUMBERS;
+    timer_font_h = 20;
+  }
+  int16_t timer_box_h = timer_font_h + 2;
+  s_c_timer_layer = make_label(window_layer,
+                               GRect(0, s_center_y - timer_box_h / 2, bounds.size.w, timer_box_h),
+                               GTextAlignmentCenter, timer_font_key, color_ink());
 
   s_b_timer_layer = make_label(window_layer, GRect(0, bounds.size.h - 32, bounds.size.w, 26),
                                GTextAlignmentCenter, FONT_KEY_LECO_26_BOLD_NUMBERS_AM_PM, color_ink());
