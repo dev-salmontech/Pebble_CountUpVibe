@@ -57,6 +57,8 @@ static TextLayer *s_status_layer;
 static TextLayer *s_c_timer_layer;
 static TextLayer *s_b_timer_layer;
 static TextLayer *s_b_interval_layer;
+static TextLayer *s_novibe_layer;   /* "No Vibe" under the status line, RUN mode */
+static TextLayer *s_quiet_layer;    /* "Quiet-Time Active" over the bottom line */
 static AppTimer *s_edit_timeout;
 static AppTimer *s_autoroll_timer;
 static int s_autoroll_dir;          /* +1 / -1 while auto-rolling, 0 otherwise */
@@ -125,6 +127,17 @@ static const VibePattern s_start_vibe_pattern = {
   .durations = s_start_vibe_durations,
   .num_segments = 1
 };
+
+/* Respect the watch's Quiet Time (Silent mode): suppress every vibration while
+ * it is active. The vibe schedule still advances (callers update
+ * next_vibe_epoch regardless), so normal buzzing resumes the moment Quiet Time
+ * is turned off. */
+static void enqueue_vibe(VibePattern pattern) {
+  if (quiet_time_is_active()) {
+    return;
+  }
+  vibes_enqueue_custom_pattern(pattern);
+}
 
 static void update_ui(void);
 static void update_app_glance_safe(void);
@@ -591,6 +604,17 @@ static void update_ui(void) {
       layer_set_frame(s_water_layer, GRect(0, s_win_h - fh, s_win_w, fh));
     }
   }
+
+  /* Quiet-Time indicators: only in RUN mode (the edit card would clash), and the
+   * vibe suppression itself happens in enqueue_vibe regardless of mode. Polled
+   * here each tick since the OS has no Quiet-Time change event. */
+  bool show_quiet = (s_mode == MODE_RUN) && quiet_time_is_active();
+  if (s_novibe_layer) {
+    layer_set_hidden(text_layer_get_layer(s_novibe_layer), !show_quiet);
+  }
+  if (s_quiet_layer) {
+    layer_set_hidden(text_layer_get_layer(s_quiet_layer), !show_quiet);
+  }
 }
 
 static void fire_vibe(void) {
@@ -604,7 +628,7 @@ static void fire_vibe(void) {
   int32_t interval = s_state.interval_seconds > 0 ? s_state.interval_seconds : g_min_step;
   int32_t base = s_state.next_vibe_epoch;
 
-  vibes_enqueue_custom_pattern(s_vibe_pattern);
+  enqueue_vibe(s_vibe_pattern);
 
   int32_t diff = now - base;
   if (diff < 0) {
@@ -649,7 +673,7 @@ static void start_timer(void) {
    * just sequenced after the visible work.) */
   apply_tick_unit();
   update_ui();
-  vibes_enqueue_custom_pattern(s_start_vibe_pattern);
+  enqueue_vibe(s_start_vibe_pattern);
   update_app_glance_safe();
   state_save();
 }
@@ -1011,6 +1035,19 @@ static void main_window_load(Window *window) {
   s_b_interval_layer = make_label(window_layer, GRect(0, bounds.size.h - 32, bounds.size.w, 26),
                                   GTextAlignmentCenter, FONT_KEY_LECO_26_BOLD_NUMBERS_AM_PM, color_ink());
 
+  /* Quiet Time (Silent mode) indicators -- small, below the status line and just
+   * above the bottom line, smaller than the RUNNING/PAUSED status. Shown only in
+   * RUN mode (no edit card to clash with) when Quiet Time is active; toggled in
+   * update_ui(). */
+  s_novibe_layer = make_label(window_layer, GRect(0, 44, bounds.size.w, 16),
+                              GTextAlignmentCenter, FONT_KEY_GOTHIC_14_BOLD, color_ink());
+  text_layer_set_text(s_novibe_layer, "No Vibe");
+  layer_set_hidden(text_layer_get_layer(s_novibe_layer), true);
+  s_quiet_layer = make_label(window_layer, GRect(0, bounds.size.h - 48, bounds.size.w, 16),
+                             GTextAlignmentCenter, FONT_KEY_GOTHIC_14_BOLD, color_ink());
+  text_layer_set_text(s_quiet_layer, "Quiet-Time Active");
+  layer_set_hidden(text_layer_get_layer(s_quiet_layer), true);
+
   apply_mode_layout();  /* also refreshes the UI (calls update_ui) */
 
   window_set_click_config_provider(window, click_config_provider);
@@ -1021,6 +1058,8 @@ static void main_window_unload(Window *window) {
   tick_timer_service_unsubscribe();
   autoroll_stop();
   cancel_edit_timeout();
+  text_layer_destroy(s_quiet_layer);
+  text_layer_destroy(s_novibe_layer);
   text_layer_destroy(s_b_interval_layer);
   text_layer_destroy(s_b_timer_layer);
   text_layer_destroy(s_c_timer_layer);
@@ -1028,6 +1067,8 @@ static void main_window_unload(Window *window) {
   text_layer_destroy(s_clock_layer);
   layer_destroy(s_deco_layer);
   layer_destroy(s_water_layer);
+  s_quiet_layer = NULL;
+  s_novibe_layer = NULL;
   s_b_interval_layer = NULL;
   s_b_timer_layer = NULL;
   s_c_timer_layer = NULL;
@@ -1112,7 +1153,7 @@ static void init(void) {
       s_state.run_started_epoch = now;
       s_state.next_vibe_epoch = next_vibe_after(now);
       s_frozen_cycle_elapsed = 0;
-      vibes_enqueue_custom_pattern(s_start_vibe_pattern);
+      enqueue_vibe(s_start_vibe_pattern);
       state_save();
       s_mode = MODE_EDIT;
       s_edit_field = FIELD_MIN;
