@@ -605,10 +605,11 @@ static void update_ui(void) {
     }
   }
 
-  /* Quiet-Time indicators: only in RUN mode (the edit card would clash), and the
-   * vibe suppression itself happens in enqueue_vibe regardless of mode. Polled
-   * here each tick since the OS has no Quiet-Time change event. */
-  bool show_quiet = (s_mode == MODE_RUN) && quiet_time_is_active();
+  /* Quiet-Time indicators shown in EVERY mode; the vibe suppression itself
+   * happens in enqueue_vibe. Polled here each tick since the OS has no
+   * Quiet-Time change event. (They sit clear of the edit card on the 200px
+   * emery target; on narrower screens they can overlap it.) */
+  bool show_quiet = quiet_time_is_active();
   if (s_novibe_layer) {
     layer_set_hidden(text_layer_get_layer(s_novibe_layer), !show_quiet);
   }
@@ -1036,9 +1037,8 @@ static void main_window_load(Window *window) {
                                   GTextAlignmentCenter, FONT_KEY_LECO_26_BOLD_NUMBERS_AM_PM, color_ink());
 
   /* Quiet Time (Silent mode) indicators -- small, below the status line and just
-   * above the bottom line, smaller than the RUNNING/PAUSED status. Shown only in
-   * RUN mode (no edit card to clash with) when Quiet Time is active; toggled in
-   * update_ui(). */
+   * above the bottom line, smaller than the RUNNING/PAUSED status. Shown in all
+   * modes when Quiet Time is active; toggled in update_ui(). */
   s_novibe_layer = make_label(window_layer, GRect(0, 44, bounds.size.w, 16),
                               GTextAlignmentCenter, FONT_KEY_GOTHIC_14_BOLD, color_ink());
   text_layer_set_text(s_novibe_layer, "No Vibe");
