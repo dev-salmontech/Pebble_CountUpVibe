@@ -13,10 +13,20 @@
 
 var DEFAULTS = { interval: 300, step: 15, color: 0x55AAFF };
 var STEPS = [1, 5, 10, 15, 20, 30];
-var PALETTE = [
-  0xFF0000, 0xFF5500, 0xFFAA00, 0xFFFF00, 0xAAFF00, 0x00FF00,
-  0x00FFAA, 0x00FFFF, 0x55AAFF, 0x0055FF, 0x0000FF, 0xAA00FF,
-  0xFF00FF, 0xFF55AA, 0xAAAAAA, 0x555555
+/* The full Pebble 64-colour palette laid out so that grid-adjacent cells are
+ * perceptual shades of one another (a smooth colour map). Rendered below as a
+ * hexagonal honeycomb. Layout is the standard Pebble/Clay COLOR picker map
+ * (from KiserDesigns/Pebble_RomanShadow's custom-color.js). 0 = empty cell. */
+var COLOR_LAYOUT = [
+  [0,        0,        '55ff00', 'aaff55', 0,        'ffff55', 'ffffaa', 0,        0       ],
+  [0,        'aaffaa', '55ff55', '00ff00', 'aaff00', 'ffff00', 'ffaa55', 'ffaaaa', 0       ],
+  ['55ffaa', '00ff55', '00aa00', '55aa00', 'aaaa55', 'aaaa00', 'ffaa00', 'ff5500', 'ff5555'],
+  ['aaffff', '00ffaa', '00aa55', '55aa55', '005500', '555500', 'aa5500', 'ff0000', 'ff0055'],
+  [0,        '55aaaa', '00aaaa', '005555', 'ffffff', '000000', 'aa5555', 'aa0000', 0       ],
+  ['55ffff', '00ffff', '00aaff', '0055aa', 'aaaaaa', '555555', '550000', 'aa0055', 'ff55aa'],
+  ['55aaff', '0055ff', '0000ff', '0000aa', '000055', '550055', 'aa00aa', 'ff00aa', 'ffaaff'],
+  [0,        '5555aa', '5555ff', '5500ff', '5500aa', 'aa00ff', 'ff00ff', 'ff55ff', 0       ],
+  [0,        0,        0,        'aaaaff', 'aa55ff', 'aa55aa', 0,        0,        0       ]
 ];
 
 var STYLE =
@@ -28,10 +38,19 @@ var STYLE =
   'input[type=number]{width:64px;text-align:center}' +
   '#step{width:100%}' +
   '.row{display:flex;align-items:center;gap:8px}' +
-  '.pal{display:flex;flex-wrap:wrap;gap:8px}' +
-  '.sw{width:42px;height:42px;border-radius:8px;border:1px solid #00000022;' +
-  'display:flex;align-items:center;justify-content:center;font-size:22px;cursor:pointer}' +
-  '.sw.sel{outline:3px solid #0a84ff}' +
+  /* Hexagonal honeycomb colour picker. Cell/row sizes are set by JS so the
+   * comb scales to the phone width; here we only define shape and behaviour. */
+  '.pal{display:block;margin:2px auto 0;position:relative}' +
+  '.hrow{display:flex;justify-content:flex-start}' +
+  '.hx{flex:0 0 auto;position:relative;box-sizing:border-box;' +
+  '-webkit-clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%);' +
+  'clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%);' +
+  'display:flex;align-items:center;justify-content:center;font-weight:700;' +
+  'line-height:1;cursor:pointer;-webkit-user-select:none;user-select:none}' +
+  '.hx.sp{visibility:hidden;cursor:default}' +
+  '.hx .ck{opacity:0}' +
+  '.hx.sel .ck{opacity:1}' +
+  '.hx.sel{box-shadow:inset 0 0 0 3px #fff,inset 0 0 0 5px rgba(0,0,0,.45)}' +
   'button{font-size:17px;padding:12px;border:0;border-radius:8px;width:100%;margin-top:6px}' +
   '#save{background:#0a84ff;color:#fff}#reset{background:#e5e5ea;color:#111}' +
   '.hint{font-size:12px;color:#999;margin-top:8px}' +
@@ -43,7 +62,6 @@ var STYLE =
   'input[type=number],select{background:#2c2c2e;color:#eee;border-color:#48484a}' +
   '#reset{background:#2c2c2e;color:#eee}' +
   '.hint{color:#8e8e93}' +
-  '.sw{border-color:#ffffff22}' +
   '}';
 
 function loadSettings() {
@@ -63,21 +81,26 @@ function sendSettings(s) {
   );
 }
 
-function hex(v) { return '#' + ('000000' + (v >>> 0).toString(16)).slice(-6); }
-
 function buildHtml(cur) {
-  var pal = PALETTE.slice();
-  if (pal.indexOf(cur.color) < 0) { pal.unshift(cur.color); }
   var mm = Math.floor(cur.interval / 60), ss = cur.interval % 60;
 
   var stepOpts = STEPS.map(function (v) {
     return '<option value="' + v + '"' + (v === cur.step ? ' selected' : '') + '>' + v + ' s</option>';
   }).join('');
 
-  var swatches = pal.map(function (v) {
-    var light = ((v >> 16 & 255) * 0.299 + (v >> 8 & 255) * 0.587 + (v & 255) * 0.114) > 140;
-    return '<div class="sw" data-c="' + v + '" style="background:' + hex(v) +
-           ';color:' + (light ? '#000' : '#fff') + '"></div>';
+  // Honeycomb: one .hrow per layout row, one .hx (hexagon) per cell. Empty
+  // cells become invisible spacers so the offset rows stay aligned.
+  var comb = COLOR_LAYOUT.map(function (row) {
+    var cells = row.map(function (c) {
+      if (!c) { return '<div class="hx sp"></div>'; }
+      var v = parseInt(c, 16);
+      var light = (parseInt(c.slice(0, 2), 16) * 0.299 +
+                   parseInt(c.slice(2, 4), 16) * 0.587 +
+                   parseInt(c.slice(4), 16) * 0.114) > 140;
+      return '<div class="hx" data-c="' + v + '" style="background:#' + c + '">' +
+             '<span class="ck" style="color:' + (light ? '#000' : '#fff') + '">✓</span></div>';
+    }).join('');
+    return '<div class="hrow">' + cells + '</div>';
   }).join('');
 
   return '<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">' +
@@ -89,7 +112,8 @@ function buildHtml(cur) {
     '<div class="row"><input id="mm" type="number" min="0" max="99" value="' + mm + '"><span>min</span>' +
     '<span id="secwrap"></span><span>sec</span></div>' +
     '<div class="hint">00:00 to 99:59 (default 05:00). Seconds step in multiples of the minimum; free typing only when the step is 1 s.</div></div>' +
-    '<div class="card"><h2>Water colour</h2><div class="pal" id="pal">' + swatches + '</div></div>' +
+    '<div class="card"><h2>Water colour</h2><div class="pal" id="pal">' + comb + '</div>' +
+    '<div class="hint">Tap a cell. Neighbouring cells are shades of the same colour.</div></div>' +
     '<div class="card"><button id="reset">Reset to defaults</button><button id="save">Save</button></div>' +
     '<script>' +
     'var DEF={interval:' + DEFAULTS.interval + ',step:' + DEFAULTS.step + ',color:' + DEFAULTS.color + '};' +
@@ -105,15 +129,31 @@ function buildHtml(cur) {
     'w.innerHTML="<select id=\\"ss\\">"+o+"</select>";}}' +
     'function readSec(step){var el=document.getElementById("ss");if(!el){return 0;}' +
     'if(step===1){return cleanSec(el.value);}return parseInt(el.value,10)||0;}' +
-    'function mark(){var n=document.querySelectorAll(".sw");for(var i=0;i<n.length;i++){' +
-    'var c=parseInt(n[i].getAttribute("data-c"),10);n[i].className="sw"+(c===sel?" sel":"");' +
-    'n[i].innerHTML=(c===sel?"\\u2713":"");}}' +
+    'function mark(){var n=document.querySelectorAll(".hx");for(var i=0;i<n.length;i++){' +
+    'var d=n[i].getAttribute("data-c");if(d===null){continue;}' +
+    'var c=parseInt(d,10);if(c===sel){n[i].className="hx sel";}else{n[i].className="hx";}}}' +
+    /* Size the comb to the phone width: pointy-top hexagons, odd rows shifted
+       half a cell, rows overlapping vertically by a quarter of the hex height. */
+    'function layoutPal(){var pal=document.getElementById("pal");pal.style.width="auto";' +
+    'var avail=pal.clientWidth||300;var hw=Math.floor(avail/9.5);if(hw>46){hw=46;}if(hw<18){hw=18;}' +
+    'var hh=Math.round(hw/0.866);pal.style.width=Math.round(hw*9.5)+"px";' +
+    'var rows=pal.getElementsByClassName("hrow");' +
+    'for(var r=0;r<rows.length;r++){rows[r].style.height=hh+"px";' +
+    'rows[r].style.marginTop=(r?(-Math.round(hh*0.25))+"px":"0");' +
+    'rows[r].style.paddingLeft=((r%2)?Math.round(hw/2):0)+"px";' +
+    'var hx=rows[r].getElementsByClassName("hx");' +
+    'for(var k=0;k<hx.length;k++){hx[k].style.width=hw+"px";hx[k].style.height=hh+"px";' +
+    'hx[k].style.fontSize=Math.round(hw*0.5)+"px";}}' +
+    'pal.style.height=(hh+(rows.length-1)*Math.round(hh*0.75))+"px";}' +
+    'window.addEventListener("resize",layoutPal);' +
     'document.getElementById("step").addEventListener("change",function(){' +
     'var st=parseInt(this.value,10);' +
     'var cv=document.getElementById("ss")?(parseInt(document.getElementById("ss").value,10)||0):0;' +
     'renderSec(st,cv);});' +
     'document.getElementById("pal").addEventListener("click",function(e){var t=e.target;' +
-    'if(t.className.indexOf("sw")<0){return;}sel=parseInt(t.getAttribute("data-c"),10);mark();});' +
+    'while(t&&(!t.className||t.className.indexOf("hx")<0)){t=t.parentNode;}' +
+    'if(!t||t.className.indexOf("sp")>-1){return;}var d=t.getAttribute("data-c");' +
+    'if(d===null){return;}sel=parseInt(d,10);mark();});' +
     'document.getElementById("reset").addEventListener("click",function(){' +
     'document.getElementById("step").value=DEF.step;document.getElementById("mm").value=Math.floor(DEF.interval/60);' +
     'renderSec(DEF.step,DEF.interval%60);sel=DEF.color;mark();});' +
@@ -127,7 +167,7 @@ function buildHtml(cur) {
     'var rt=(location.search.match(/[?&]return_to=([^&]+)/)||[])[1];' +
     'rt=rt?decodeURIComponent(rt):"pebblejs://close#";' +
     'location.href=rt+encodeURIComponent(JSON.stringify(out));});' +
-    'renderSec(' + cur.step + ',' + ss + ');mark();' +
+    'renderSec(' + cur.step + ',' + ss + ');layoutPal();mark();' +
     '<\/script></body></html>';
 }
 
