@@ -13,20 +13,23 @@
 
 var DEFAULTS = { interval: 300, step: 15, color: 0x55AAFF };
 var STEPS = [1, 5, 10, 15, 20, 30];
-/* The full Pebble 64-colour palette laid out so that grid-adjacent cells are
- * perceptual shades of one another (a smooth colour map). Rendered below as a
- * hexagonal honeycomb. Layout is the standard Pebble/Clay COLOR picker map
- * (from KiserDesigns/Pebble_RomanShadow's custom-color.js). 0 = empty cell. */
+/* A regular hexagonal honeycomb colour wheel. The Pebble watch can only display
+ * 64 colours (2 bits per channel: 00/55/AA/FF); dropping pure black and white
+ * leaves 62, and the comb has 61 cells -- so every cell gets a DISTINCT valid
+ * Pebble colour. Each colour was matched to a smooth hue/saturation/lightness
+ * wheel (hue around, saturation out from a grey centre, darker toward the
+ * bottom) via optimal assignment, so neighbours stay close shades. Rows are
+ * jagged (5..9..5) and rendered centred, giving the honeycomb's brick offset. */
 var COLOR_LAYOUT = [
-  [0,        0,        '55ff00', 'aaff55', 0,        'ffff55', 'ffffaa', 0,        0       ],
-  [0,        'aaffaa', '55ff55', '00ff00', 'aaff00', 'ffff00', 'ffaa55', 'ffaaaa', 0       ],
-  ['55ffaa', '00ff55', '00aa00', '55aa00', 'aaaa55', 'aaaa00', 'ffaa00', 'ff5500', 'ff5555'],
-  ['aaffff', '00ffaa', '00aa55', '55aa55', '005500', '555500', 'aa5500', 'ff0000', 'ff0055'],
-  [0,        '55aaaa', '00aaaa', '005555', 'ffffff', '000000', 'aa5555', 'aa0000', 0       ],
-  ['55ffff', '00ffff', '00aaff', '0055aa', 'aaaaaa', '555555', '550000', 'aa0055', 'ff55aa'],
-  ['55aaff', '0055ff', '0000ff', '0000aa', '000055', '550055', 'aa00aa', 'ff00aa', 'ffaaff'],
-  [0,        '5555aa', '5555ff', '5500ff', '5500aa', 'aa00ff', 'ff00ff', 'ff55ff', 0       ],
-  [0,        0,        0,        'aaaaff', 'aa55ff', 'aa55aa', 0,        0,        0       ]
+  ['00ff00', '55ff00', '55aa00', 'aaff00', 'ffff00'],
+  ['00ff55', '55ff55', '00aa00', 'aaff55', 'ffff55', 'ffaa00'],
+  ['00aa55', '55aa55', '005500', 'aaaa55', 'aaaa00', 'ffaa55', 'aa5500'],
+  ['00ffaa', '55ffaa', '00aaaa', 'aaffaa', 'ffffaa', '555500', 'ff5555', 'ff5500'],
+  ['00ffff', '55ffff', '55aaaa', 'aaffff', 'aaaaaa', 'ffaaaa', 'aa5555', 'aa0000', 'ff0000'],
+  ['005555', '00aaff', '55aaff', 'aaaaff', 'ffaaff', 'ff55aa', '550000', 'ff0055'],
+  ['0055aa', '5555aa', '5555ff', 'aa55aa', 'ff55ff', 'ff00aa', 'aa0055'],
+  ['0055ff', '0000ff', '5500aa', 'aa55ff', 'ff00ff', '550055'],
+  ['0000aa', '5500ff', '000055', 'aa00ff', 'aa00aa']
 ];
 
 var STYLE =
@@ -41,16 +44,18 @@ var STYLE =
   /* Hexagonal honeycomb colour picker. Cell/row sizes are set by JS so the
    * comb scales to the phone width; here we only define shape and behaviour. */
   '.pal{display:block;margin:2px auto 0;position:relative}' +
-  '.hrow{display:flex;justify-content:flex-start}' +
-  '.hx{flex:0 0 auto;position:relative;box-sizing:border-box;' +
+  '.hrow{display:flex;justify-content:center}' +
+  '.hx{flex:0 0 auto;position:relative;box-sizing:border-box;cursor:pointer;' +
+  'background:var(--c);' +
   '-webkit-clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%);' +
-  'clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%);' +
-  'display:flex;align-items:center;justify-content:center;font-weight:700;' +
-  'line-height:1;cursor:pointer;-webkit-user-select:none;user-select:none}' +
-  '.hx.sp{visibility:hidden;cursor:default}' +
-  '.hx .ck{opacity:0}' +
-  '.hx.sel .ck{opacity:1}' +
-  '.hx.sel{box-shadow:inset 0 0 0 3px #fff,inset 0 0 0 5px rgba(0,0,0,.45)}' +
+  'clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)}' +
+  /* Selected cell: fill the hexagon black, then draw the colour as a smaller
+   * hexagon inside it -- the black shows through as a hex-shaped border. */
+  '.hx.sel{background:#000;z-index:1}' +
+  '.hx.sel::after{content:"";position:absolute;left:11%;top:11%;right:11%;bottom:11%;' +
+  'background:var(--c);' +
+  '-webkit-clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%);' +
+  'clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)}' +
   'button{font-size:17px;padding:12px;border:0;border-radius:8px;width:100%;margin-top:6px}' +
   '#save{background:#0a84ff;color:#fff}#reset{background:#e5e5ea;color:#111}' +
   '.hint{font-size:12px;color:#999;margin-top:8px}' +
@@ -88,22 +93,17 @@ function buildHtml(cur) {
     return '<option value="' + v + '"' + (v === cur.step ? ' selected' : '') + '>' + v + ' s</option>';
   }).join('');
 
-  // Honeycomb: one .hrow per layout row, one .hx (hexagon) per cell. Empty
-  // cells become invisible spacers so the offset rows stay aligned.
+  // Honeycomb: one .hrow per layout row, one .hx (hexagon) per cell. Rows are
+  // centred so the jagged 5..9..5 widths tessellate into a regular hexagon.
   var comb = COLOR_LAYOUT.map(function (row) {
     var cells = row.map(function (c) {
-      if (!c) { return '<div class="hx sp"></div>'; }
-      var v = parseInt(c, 16);
-      var light = (parseInt(c.slice(0, 2), 16) * 0.299 +
-                   parseInt(c.slice(2, 4), 16) * 0.587 +
-                   parseInt(c.slice(4), 16) * 0.114) > 140;
-      return '<div class="hx" data-c="' + v + '" style="background:#' + c + '">' +
-             '<span class="ck" style="color:' + (light ? '#000' : '#fff') + '">✓</span></div>';
+      return '<div class="hx" data-c="' + parseInt(c, 16) + '" style="--c:#' + c + '"></div>';
     }).join('');
     return '<div class="hrow">' + cells + '</div>';
   }).join('');
 
-  return '<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">' +
+  return '<!DOCTYPE html><html><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width,initial-scale=1">' +
     '<style>' + STYLE + '</style></head><body>' +
     '<div class="bar">CountUpVibe Settings</div>' +
     '<div class="card"><h2>Minimum interval step</h2><select id="step">' + stepOpts + '</select>' +
@@ -113,7 +113,7 @@ function buildHtml(cur) {
     '<span id="secwrap"></span><span>sec</span></div>' +
     '<div class="hint">00:00 to 99:59 (default 05:00). Seconds step in multiples of the minimum; free typing only when the step is 1 s.</div></div>' +
     '<div class="card"><h2>Water colour</h2><div class="pal" id="pal">' + comb + '</div>' +
-    '<div class="hint">Tap a cell. Neighbouring cells are shades of the same colour.</div></div>' +
+    '<div class="hint">Choose a color</div></div>' +
     '<div class="card"><button id="reset">Reset to defaults</button><button id="save">Save</button></div>' +
     '<script>' +
     'var DEF={interval:' + DEFAULTS.interval + ',step:' + DEFAULTS.step + ',color:' + DEFAULTS.color + '};' +
@@ -132,18 +132,17 @@ function buildHtml(cur) {
     'function mark(){var n=document.querySelectorAll(".hx");for(var i=0;i<n.length;i++){' +
     'var d=n[i].getAttribute("data-c");if(d===null){continue;}' +
     'var c=parseInt(d,10);if(c===sel){n[i].className="hx sel";}else{n[i].className="hx";}}}' +
-    /* Size the comb to the phone width: pointy-top hexagons, odd rows shifted
-       half a cell, rows overlapping vertically by a quarter of the hex height. */
+    /* Size the comb to the phone width. Pointy-top hexagons; the widest row is
+       9 cells, and centring the narrower rows gives the half-cell brick offset.
+       Rows overlap vertically by a quarter of the hex height. */
     'function layoutPal(){var pal=document.getElementById("pal");pal.style.width="auto";' +
-    'var avail=pal.clientWidth||300;var hw=Math.floor(avail/9.5);if(hw>46){hw=46;}if(hw<18){hw=18;}' +
-    'var hh=Math.round(hw/0.866);pal.style.width=Math.round(hw*9.5)+"px";' +
+    'var avail=pal.clientWidth||300;var hw=Math.floor(avail/9);if(hw>46){hw=46;}if(hw<18){hw=18;}' +
+    'var hh=Math.round(hw/0.866);pal.style.width=(hw*9)+"px";' +
     'var rows=pal.getElementsByClassName("hrow");' +
     'for(var r=0;r<rows.length;r++){rows[r].style.height=hh+"px";' +
     'rows[r].style.marginTop=(r?(-Math.round(hh*0.25))+"px":"0");' +
-    'rows[r].style.paddingLeft=((r%2)?Math.round(hw/2):0)+"px";' +
     'var hx=rows[r].getElementsByClassName("hx");' +
-    'for(var k=0;k<hx.length;k++){hx[k].style.width=hw+"px";hx[k].style.height=hh+"px";' +
-    'hx[k].style.fontSize=Math.round(hw*0.5)+"px";}}' +
+    'for(var k=0;k<hx.length;k++){hx[k].style.width=hw+"px";hx[k].style.height=hh+"px";}}' +
     'pal.style.height=(hh+(rows.length-1)*Math.round(hh*0.75))+"px";}' +
     'window.addEventListener("resize",layoutPal);' +
     'document.getElementById("step").addEventListener("change",function(){' +
@@ -151,9 +150,8 @@ function buildHtml(cur) {
     'var cv=document.getElementById("ss")?(parseInt(document.getElementById("ss").value,10)||0):0;' +
     'renderSec(st,cv);});' +
     'document.getElementById("pal").addEventListener("click",function(e){var t=e.target;' +
-    'while(t&&(!t.className||t.className.indexOf("hx")<0)){t=t.parentNode;}' +
-    'if(!t||t.className.indexOf("sp")>-1){return;}var d=t.getAttribute("data-c");' +
-    'if(d===null){return;}sel=parseInt(d,10);mark();});' +
+    'if(!t||!t.className||t.className.indexOf("hx")<0){return;}' +
+    'var d=t.getAttribute("data-c");if(d===null){return;}sel=parseInt(d,10);mark();});' +
     'document.getElementById("reset").addEventListener("click",function(){' +
     'document.getElementById("step").value=DEF.step;document.getElementById("mm").value=Math.floor(DEF.interval/60);' +
     'renderSec(DEF.step,DEF.interval%60);sel=DEF.color;mark();});' +
