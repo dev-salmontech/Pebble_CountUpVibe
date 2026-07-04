@@ -13,23 +13,21 @@
 
 var DEFAULTS = { interval: 300, step: 15, color: 0x55AAFF };
 var STEPS = [1, 5, 10, 15, 20, 30];
-/* A regular hexagonal honeycomb colour wheel. The Pebble watch can only display
- * 64 colours (2 bits per channel: 00/55/AA/FF); dropping pure black and white
- * leaves 62, and the comb has 61 cells -- so every cell gets a DISTINCT valid
- * Pebble colour. Each colour was matched to a smooth hue/saturation/lightness
- * wheel (hue around, saturation out from a grey centre, darker toward the
- * bottom) via optimal assignment, so neighbours stay close shades. Rows are
- * jagged (5..9..5) and rendered centred, giving the honeycomb's brick offset. */
+/* A hexagonal honeycomb colour wheel. The Pebble watch can only display 64
+ * colours (2 bits per channel: 00/55/AA/FF). We drop pure black/white and the
+ * darkest colours (so the black selection frame stays visible on every cell),
+ * leaving the 51 lightest, and give each of the comb's 51 cells a DISTINCT one.
+ * Colours are arranged to minimise the difference between neighbouring cells,
+ * so the spectrum spreads smoothly and evenly. Rows (6,7,8,9,8,7,6) are
+ * rendered centred, which gives the half-cell brick offset a honeycomb needs. */
 var COLOR_LAYOUT = [
-  ['00ff00', '55ff00', '55aa00', 'aaff00', 'ffff00'],
-  ['00ff55', '55ff55', '00aa00', 'aaff55', 'ffff55', 'ffaa00'],
-  ['00aa55', '55aa55', '005500', 'aaaa55', 'aaaa00', 'ffaa55', 'aa5500'],
-  ['00ffaa', '55ffaa', '00aaaa', 'aaffaa', 'ffffaa', '555500', 'ff5555', 'ff5500'],
-  ['00ffff', '55ffff', '55aaaa', 'aaffff', 'aaaaaa', 'ffaaaa', 'aa5555', 'aa0000', 'ff0000'],
-  ['005555', '00aaff', '55aaff', 'aaaaff', 'ffaaff', 'ff55aa', '550000', 'ff0055'],
-  ['0055aa', '5555aa', '5555ff', 'aa55aa', 'ff55ff', 'ff00aa', 'aa0055'],
-  ['0055ff', '0000ff', '5500aa', 'aa55ff', 'ff00ff', '550055'],
-  ['0000aa', '5500ff', '000055', 'aa00ff', 'aa00aa']
+  ['00ff00', '55ff00', 'aaff55', 'aaff00', 'ffff00', 'ffaa00'],
+  ['00ff55', '55ff55', '00aa00', '55aa00', 'ffff55', 'aaaa00', 'ffaa55'],
+  ['55ffaa', '00ffaa', '00aa55', '55aa55', 'ffffaa', 'aaaa55', 'aa5500', 'ff5500'],
+  ['aaffaa', '00ffff', '00aaaa', '55aaaa', 'aaaaaa', 'ffaaaa', 'aa5555', 'ff5555', 'ff0000'],
+  ['55ffff', 'aaffff', '55aaff', 'aaaaff', 'ffaaff', 'aa55aa', 'aa0055', 'ff0055'],
+  ['00aaff', '5555aa', '5555ff', 'aa55ff', 'ff55ff', 'aa00aa', 'ff55aa'],
+  ['0055aa', '0055ff', '5500ff', 'aa00ff', 'ff00ff', 'ff00aa']
 ];
 
 var STYLE =
@@ -46,16 +44,16 @@ var STYLE =
   '.pal{display:block;margin:2px auto 0;position:relative}' +
   '.hrow{display:flex;justify-content:center}' +
   '.hx{flex:0 0 auto;position:relative;box-sizing:border-box;cursor:pointer;' +
-  'background:var(--c);' +
   '-webkit-clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%);' +
   'clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)}' +
-  /* Selected cell: fill the hexagon black, then draw the colour as a smaller
-   * hexagon inside it -- the black shows through as a hex-shaped border. */
-  '.hx.sel{background:#000;z-index:1}' +
-  '.hx.sel::after{content:"";position:absolute;left:11%;top:11%;right:11%;bottom:11%;' +
-  'background:var(--c);' +
+  /* The cell colour lives on an inner hexagon (.in). Clicks pass through it to
+   * the cell. When selected, the cell fills black and .in shrinks, so the black
+   * shows as a hex-shaped border that always tracks the chosen cell. */
+  '.hx .in{position:absolute;left:0;top:0;right:0;bottom:0;pointer-events:none;' +
   '-webkit-clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%);' +
   'clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)}' +
+  '.hx.sel{background:#000}' +
+  '.hx.sel .in{left:12%;top:12%;right:12%;bottom:12%}' +
   'button{font-size:17px;padding:12px;border:0;border-radius:8px;width:100%;margin-top:6px}' +
   '#save{background:#0a84ff;color:#fff}#reset{background:#e5e5ea;color:#111}' +
   '.hint{font-size:12px;color:#999;margin-top:8px}' +
@@ -97,7 +95,8 @@ function buildHtml(cur) {
   // centred so the jagged 5..9..5 widths tessellate into a regular hexagon.
   var comb = COLOR_LAYOUT.map(function (row) {
     var cells = row.map(function (c) {
-      return '<div class="hx" data-c="' + parseInt(c, 16) + '" style="--c:#' + c + '"></div>';
+      return '<div class="hx" data-c="' + parseInt(c, 16) + '">' +
+             '<i class="in" style="background:#' + c + '"></i></div>';
     }).join('');
     return '<div class="hrow">' + cells + '</div>';
   }).join('');
@@ -150,8 +149,9 @@ function buildHtml(cur) {
     'var cv=document.getElementById("ss")?(parseInt(document.getElementById("ss").value,10)||0):0;' +
     'renderSec(st,cv);});' +
     'document.getElementById("pal").addEventListener("click",function(e){var t=e.target;' +
-    'if(!t||!t.className||t.className.indexOf("hx")<0){return;}' +
-    'var d=t.getAttribute("data-c");if(d===null){return;}sel=parseInt(d,10);mark();});' +
+    'while(t&&t!==this&&(!t.className||String(t.className).indexOf("hx")<0)){t=t.parentNode;}' +
+    'if(!t||t===this){return;}var d=t.getAttribute("data-c");' +
+    'if(d===null){return;}sel=parseInt(d,10);mark();});' +
     'document.getElementById("reset").addEventListener("click",function(){' +
     'document.getElementById("step").value=DEF.step;document.getElementById("mm").value=Math.floor(DEF.interval/60);' +
     'renderSec(DEF.step,DEF.interval%60);sel=DEF.color;mark();});' +
