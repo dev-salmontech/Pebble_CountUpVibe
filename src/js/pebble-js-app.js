@@ -19,13 +19,16 @@ var STEPS = [1, 5, 10, 15, 20, 30];
  * and the marginally-different near-duplicate shades, keeping 37 colours that
  * cover the spectrum evenly -- one per cell of a regular 37-cell hexagon. Cells
  * are arranged as an even hue wheel (hue around, saturation out from a neutral
- * centre) and smoothed so neighbours stay close shades. Rows (4,5,6,7,6,5,4)
- * are rendered centred, giving the half-cell brick offset a honeycomb needs. */
+ * centre) and smoothed so neighbours stay close shades. A grey gradient runs
+ * from a dark centre (555555) out through the (over-dense) green quadrant,
+ * getting lighter (aaaaaa -> ffffff); those are the only three greys the 2-bit
+ * hardware offers besides black. Rows (4,5,6,7,6,5,4) are rendered centred,
+ * giving the half-cell brick offset a honeycomb needs. */
 var COLOR_LAYOUT = [
   ['00ff00', '55ff00', 'aaff00', 'ffff00'],
-  ['00ff55', '55ff55', 'aaff55', 'ffff55', 'ffaa00'],
-  ['00ffaa', '55ffaa', 'aaffaa', 'ffffaa', 'ffaa55', 'ff5500'],
-  ['00ffff', '55ffff', 'aaffff', 'aaaaaa', 'ffaaaa', 'ff5555', 'ff0000'],
+  ['00ff55', 'ffffff', 'aaff55', 'ffff55', 'ffaa00'],
+  ['00ffaa', '55ffaa', 'aaaaaa', 'ffffaa', 'ffaa55', 'ff5500'],
+  ['00ffff', '55ffff', 'aaffff', '555555', 'ffaaaa', 'ff5555', 'ff0000'],
   ['00aaff', '55aaff', 'aaaaff', 'ffaaff', 'ff55aa', 'ff0055'],
   ['0055ff', '5555ff', 'aa55ff', 'ff55ff', 'ff00aa'],
   ['5500ff', 'aa00ff', 'ff00ff', 'aa00aa']
