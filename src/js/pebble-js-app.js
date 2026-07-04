@@ -13,21 +13,22 @@
 
 var DEFAULTS = { interval: 300, step: 15, color: 0x55AAFF };
 var STEPS = [1, 5, 10, 15, 20, 30];
-/* A hexagonal honeycomb colour wheel. The Pebble watch can only display 64
- * colours (2 bits per channel: 00/55/AA/FF). We drop pure black/white and the
+/* A symmetric hexagonal honeycomb colour wheel. The Pebble watch can only show
+ * 64 colours (2 bits per channel: 00/55/AA/FF). We drop pure black/white, the
  * darkest colours (so the black selection frame stays visible on every cell),
- * leaving the 51 lightest, and give each of the comb's 51 cells a DISTINCT one.
- * Colours are arranged to minimise the difference between neighbouring cells,
- * so the spectrum spreads smoothly and evenly. Rows (6,7,8,9,8,7,6) are
- * rendered centred, which gives the half-cell brick offset a honeycomb needs. */
+ * and the marginally-different near-duplicate shades, keeping 37 colours that
+ * cover the spectrum evenly -- one per cell of a regular 37-cell hexagon. Cells
+ * are arranged as an even hue wheel (hue around, saturation out from a neutral
+ * centre) and smoothed so neighbours stay close shades. Rows (4,5,6,7,6,5,4)
+ * are rendered centred, giving the half-cell brick offset a honeycomb needs. */
 var COLOR_LAYOUT = [
-  ['00ff00', '55ff00', 'aaff55', 'aaff00', 'ffff00', 'ffaa00'],
-  ['00ff55', '55ff55', '00aa00', '55aa00', 'ffff55', 'aaaa00', 'ffaa55'],
-  ['55ffaa', '00ffaa', '00aa55', '55aa55', 'ffffaa', 'aaaa55', 'aa5500', 'ff5500'],
-  ['aaffaa', '00ffff', '00aaaa', '55aaaa', 'aaaaaa', 'ffaaaa', 'aa5555', 'ff5555', 'ff0000'],
-  ['55ffff', 'aaffff', '55aaff', 'aaaaff', 'ffaaff', 'aa55aa', 'aa0055', 'ff0055'],
-  ['00aaff', '5555aa', '5555ff', 'aa55ff', 'ff55ff', 'aa00aa', 'ff55aa'],
-  ['0055aa', '0055ff', '5500ff', 'aa00ff', 'ff00ff', 'ff00aa']
+  ['00ff00', '55ff00', 'aaff00', 'ffff00'],
+  ['00ff55', '55ff55', 'aaff55', 'ffff55', 'ffaa00'],
+  ['00ffaa', '55ffaa', 'aaffaa', 'ffffaa', 'ffaa55', 'ff5500'],
+  ['00ffff', '55ffff', 'aaffff', 'aaaaaa', 'ffaaaa', 'ff5555', 'ff0000'],
+  ['00aaff', '55aaff', 'aaaaff', 'ffaaff', 'ff55aa', 'ff0055'],
+  ['0055ff', '5555ff', 'aa55ff', 'ff55ff', 'ff00aa'],
+  ['5500ff', 'aa00ff', 'ff00ff', 'aa00aa']
 ];
 
 var STYLE =
@@ -131,13 +132,14 @@ function buildHtml(cur) {
     'function mark(){var n=document.querySelectorAll(".hx");for(var i=0;i<n.length;i++){' +
     'var d=n[i].getAttribute("data-c");if(d===null){continue;}' +
     'var c=parseInt(d,10);if(c===sel){n[i].className="hx sel";}else{n[i].className="hx";}}}' +
-    /* Size the comb to the phone width. Pointy-top hexagons; the widest row is
-       9 cells, and centring the narrower rows gives the half-cell brick offset.
-       Rows overlap vertically by a quarter of the hex height. */
+    /* Size the comb to the phone width. Pointy-top hexagons; centring the
+       narrower rows gives the half-cell brick offset. Rows overlap vertically
+       by a quarter of the hex height. */
     'function layoutPal(){var pal=document.getElementById("pal");pal.style.width="auto";' +
-    'var avail=pal.clientWidth||300;var hw=Math.floor(avail/9);if(hw>46){hw=46;}if(hw<18){hw=18;}' +
-    'var hh=Math.round(hw/0.866);pal.style.width=(hw*9)+"px";' +
-    'var rows=pal.getElementsByClassName("hrow");' +
+    'var rows=pal.getElementsByClassName("hrow");var maxc=0;' +
+    'for(var r=0;r<rows.length;r++){var n=rows[r].children.length;if(n>maxc){maxc=n;}}' +
+    'var avail=pal.clientWidth||300;var hw=Math.floor(avail/maxc);if(hw>52){hw=52;}if(hw<18){hw=18;}' +
+    'var hh=Math.round(hw/0.866);pal.style.width=(hw*maxc)+"px";' +
     'for(var r=0;r<rows.length;r++){rows[r].style.height=hh+"px";' +
     'rows[r].style.marginTop=(r?(-Math.round(hh*0.25))+"px":"0");' +
     'var hx=rows[r].getElementsByClassName("hx");' +
