@@ -19,17 +19,19 @@ var STEPS = [1, 5, 10, 15, 20, 30];
  * and the marginally-different near-duplicate shades, keeping 37 colours that
  * cover the spectrum evenly -- one per cell of a regular 37-cell hexagon. Cells
  * are arranged as an even hue wheel (hue around, saturation out from a neutral
- * centre) and smoothed so neighbours stay close shades. Two greys sit at the
- * centre (dark 555555, with lighter aaaaaa beside it), and the top-left green
- * corner uses darker greens (00aa00/55aa00/00aa55) so the light greens don't
- * all look alike. Rows (4,5,6,7,6,5,4) are rendered centred, giving the
+ * centre) and smoothed so neighbours stay close shades. Vivid colours sit on
+ * the rim and muted mid-tones ring the two central greys (dark 555555 + lighter
+ * aaaaaa), so each hue spans light->dark instead of a block of near-identical
+ * pale cells: darker greens (00aa00/55aa00/00aa55) in the green corner, olives
+ * (aaaa00/aaaa55) in the yellow area, teals + muted blue (00aaaa/55aaaa/5555aa)
+ * in the cyan area. Rows (4,5,6,7,6,5,4) are rendered centred, giving the
  * half-cell brick offset a honeycomb needs. */
 var COLOR_LAYOUT = [
   ['00aa00', '55ff00', 'aaff00', 'ffff00'],
-  ['00aa55', '55aa00', 'aaff55', 'ffff55', 'ffaa00'],
-  ['00ffaa', '55ffaa', 'aaaaaa', 'ffffaa', 'ffaa55', 'ff5500'],
-  ['00ffff', '55ffff', 'aaffff', '555555', 'ffaaaa', 'ff5555', 'ff0000'],
-  ['00aaff', '55aaff', 'aaaaff', 'ffaaff', 'ff55aa', 'ff0055'],
+  ['00aa55', '55aa00', 'aaaa00', 'ffff55', 'ffaa00'],
+  ['00ffaa', '55ffaa', 'aaaaaa', 'aaaa55', 'ffaa55', 'ff5500'],
+  ['00ffff', '00aaaa', '55aaaa', '555555', 'ffaaaa', 'ff5555', 'ff0000'],
+  ['00aaff', '55aaff', '5555aa', 'ffaaff', 'ff55aa', 'ff0055'],
   ['0055ff', '5555ff', 'aa55ff', 'ff55ff', 'ff00aa'],
   ['5500ff', 'aa00ff', 'ff00ff', 'aa00aa']
 ];
