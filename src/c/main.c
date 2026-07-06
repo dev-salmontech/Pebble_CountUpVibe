@@ -509,7 +509,16 @@ static void deco_update_proc(Layer *layer, GContext *ctx) {
 static void update_clock_text(void) {
   time_t t = time(NULL);
   struct tm *tm = localtime(&t);
-  strftime(s_clock_text, sizeof(s_clock_text), "%H:%M", tm);
+  if (clock_is_24h_style()) {
+    strftime(s_clock_text, sizeof(s_clock_text), "%H:%M", tm);
+  } else {
+    /* 12h: strip the leading zero on the hour (09:05 -> 9:05). No AM/PM to keep
+     * the top clock compact. */
+    strftime(s_clock_text, sizeof(s_clock_text), "%I:%M", tm);
+    if (s_clock_text[0] == '0') {
+      memmove(s_clock_text, s_clock_text + 1, strlen(s_clock_text));
+    }
+  }
 }
 
 static void update_edit_display(void) {

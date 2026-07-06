@@ -3,8 +3,8 @@
   "shortName": "CountUpVibe",
   "longName": "Pebble CountUpVibe",
   "companyName": "SalmonTech",
-  "versionLabel": "2.2.1",
-  "versionCode": 14,
+  "versionLabel": "2.2.2",
+  "versionCode": 15,
   "sdkVersion": "4",
   "targetPlatforms": [
     "aplite",
