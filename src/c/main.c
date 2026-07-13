@@ -796,8 +796,13 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
    * which re-syncs the vibe schedule) ONLY from a no-progress state -- stopped,
    * reset, or freshly launched all have elapsed == 0. A running or paused session
    * with progress keeps its on-watch interval; the new default still takes effect
-   * at the next fresh start / launch. */
-  if (sched_changed && total_elapsed() == 0) {
+   * at the next fresh start / launch.
+   * Exception: when "Remember last interval" is ON, the live interval is driven by
+   * the persisted last-set value, not the phone default -- so the config push that
+   * PKJS sends on every launch (auto-restore) must NOT overwrite it here. Without
+   * this guard, the remembered interval is clobbered back to the default a moment
+   * after each fresh launch. */
+  if (sched_changed && total_elapsed() == 0 && !g_remember_interval) {
     apply_interval(g_default_interval);
     /* If the editor is open on this fresh session (the default-launch editor, or
      * right after a reinstall when the phone re-pushes the retained config),
