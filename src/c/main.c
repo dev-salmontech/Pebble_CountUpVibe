@@ -16,11 +16,13 @@
 #define MSG_INTERVAL_DEFAULT 0
 #define MSG_MIN_STEP 1
 #define MSG_WATER_COLOR 2
+#define MSG_REMEMBER_INTERVAL 3
 
-/* 0: every fresh launch starts at the configured default (stateless).
- * 1: remember the last interval the user set across restarts.
- * Flip to 1 to switch behaviours. */
-#define REMEMBER_INTERVAL 0
+/* Factory default for the phone-configurable "Remember last interval" toggle.
+ * false: every fresh launch starts at the configured default (stateless).
+ * true:  remember the last interval the user set across restarts.
+ * Live value is g_remember_interval, loaded from persist / set via AppMessage. */
+#define DEFAULT_REMEMBER_INTERVAL false
 
 #define COOKIE_VIBE 1
 
@@ -35,7 +37,8 @@ enum {
   /* Settings (separate range from the timer state above). */
   PERSIST_SET_DEFAULT_INTERVAL = 20,
   PERSIST_SET_MIN_STEP = 21,
-  PERSIST_SET_WATER_COLOR = 22
+  PERSIST_SET_WATER_COLOR = 22,
+  PERSIST_SET_REMEMBER = 23
 };
 
 enum { MODE_EDIT, MODE_RUN };
@@ -69,6 +72,7 @@ static int32_t s_frozen_cycle_elapsed;
 static int32_t g_default_interval = DEFAULT_INTERVAL_DEFAULT;
 static int32_t g_min_step = DEFAULT_MIN_STEP;   /* seconds editor step + min interval */
 static uint32_t g_water_color_hex = DEFAULT_WATER_COLOR_HEX;
+static bool g_remember_interval = DEFAULT_REMEMBER_INTERVAL;
 static int s_mode;
 static int s_edit_field;
 static int32_t s_edit_min;
@@ -281,6 +285,9 @@ static void settings_load(void) {
   if (persist_exists(PERSIST_SET_WATER_COLOR)) {
     g_water_color_hex = (uint32_t)persist_read_int(PERSIST_SET_WATER_COLOR);
   }
+  if (persist_exists(PERSIST_SET_REMEMBER)) {
+    g_remember_interval = persist_read_bool(PERSIST_SET_REMEMBER);
+  }
   settings_sanitize();
 }
 
@@ -288,6 +295,7 @@ static void settings_save(void) {
   persist_write_int(PERSIST_SET_DEFAULT_INTERVAL, g_default_interval);
   persist_write_int(PERSIST_SET_MIN_STEP, g_min_step);
   persist_write_int(PERSIST_SET_WATER_COLOR, (int32_t)g_water_color_hex);
+  persist_write_bool(PERSIST_SET_REMEMBER, g_remember_interval);
 }
 
 static void state_load_or_default(void) {
@@ -756,6 +764,7 @@ static void apply_interval(int32_t total_seconds) {
 static void inbox_received_handler(DictionaryIterator *iter, void *context) {
   bool sched_changed = false;  /* interval default or min step */
   bool color_changed = false;
+  bool other_changed = false;  /* settings with no immediate live effect (remember toggle) */
 
   Tuple *t = dict_find(iter, MSG_MIN_STEP);
   if (t && is_valid_step(t->value->int32)) {
@@ -772,8 +781,13 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
     g_water_color_hex = (uint32_t)t->value->int32;
     color_changed = true;
   }
+  t = dict_find(iter, MSG_REMEMBER_INTERVAL);
+  if (t) {
+    g_remember_interval = (t->value->int32 != 0);
+    other_changed = true;
+  }
 
-  if (!sched_changed && !color_changed) {
+  if (!sched_changed && !color_changed && !other_changed) {
     return;
   }
   settings_sanitize();
@@ -1152,10 +1166,12 @@ static void init(void) {
     } else {
       /* Default: open the editor with the timer already running from a full
        * cycle, so vibrations fire at the (default) interval until the user
-       * changes it. Only the interval optionally persists (REMEMBER_INTERVAL). */
-#if !REMEMBER_INTERVAL
-      s_state.interval_seconds = g_default_interval;
-#endif
+       * changes it. When the "Remember last interval" toggle is off (default),
+       * this fresh session resets to the configured default; when on, the last
+       * interval loaded from persist is kept. */
+      if (!g_remember_interval) {
+        s_state.interval_seconds = g_default_interval;
+      }
       int32_t now = now_seconds();   /* one read: run start & vibe epoch stay aligned */
       s_state.running = true;
       s_state.elapsed_accum = 0;

@@ -11,7 +11,7 @@
  * 1 s), (3) water colour. Keys sent must match appinfo.json "appKeys".
  */
 
-var DEFAULTS = { interval: 300, step: 15, color: 0x55AAFF };
+var DEFAULTS = { interval: 300, step: 15, color: 0x55AAFF, remember: false };
 var STEPS = [1, 5, 10, 15, 20, 30];
 /* A symmetric hexagonal honeycomb colour wheel. The Pebble watch can only show
  * 64 colours (2 bits per channel: 00/55/AA/FF). We drop pure black/white, the
@@ -79,13 +79,15 @@ function loadSettings() {
   return {
     interval: typeof s.interval === 'number' ? s.interval : DEFAULTS.interval,
     step: typeof s.step === 'number' ? s.step : DEFAULTS.step,
-    color: typeof s.color === 'number' ? s.color : DEFAULTS.color
+    color: typeof s.color === 'number' ? s.color : DEFAULTS.color,
+    remember: typeof s.remember === 'boolean' ? s.remember : DEFAULTS.remember
   };
 }
 
 function sendSettings(s) {
   Pebble.sendAppMessage(
-    { 'INTERVAL_DEFAULT': s.interval, 'MIN_STEP': s.step, 'WATER_COLOR': s.color },
+    { 'INTERVAL_DEFAULT': s.interval, 'MIN_STEP': s.step, 'WATER_COLOR': s.color,
+      'REMEMBER_INTERVAL': s.remember ? 1 : 0 },
     function () {}, function () {}
   );
 }
@@ -119,9 +121,13 @@ function buildHtml(cur) {
     '<div class="hint">00:00 to 99:59 (default 05:00). Seconds step in multiples of the minimum; free typing only when the step is 1 s.</div></div>' +
     '<div class="card"><h2>Water colour</h2><div class="pal" id="pal">' + comb + '</div>' +
     '<div class="hint">Choose a color</div></div>' +
+    '<div class="card"><h2>Remember last interval</h2>' +
+    '<div class="row"><input id="rem" type="checkbox"' + (cur.remember ? ' checked' : '') + '>' +
+    '<span>Keep the interval I set last time</span></div>' +
+    '<div class="hint">Off: every fresh launch starts at the default interval above. On: the app reopens at whatever interval you last set on the watch.</div></div>' +
     '<div class="card"><button id="reset">Reset to defaults</button><button id="save">Save</button></div>' +
     '<script>' +
-    'var DEF={interval:' + DEFAULTS.interval + ',step:' + DEFAULTS.step + ',color:' + DEFAULTS.color + '};' +
+    'var DEF={interval:' + DEFAULTS.interval + ',step:' + DEFAULTS.step + ',color:' + DEFAULTS.color + ',remember:' + DEFAULTS.remember + '};' +
     'var sel=' + cur.color + ';' +
     'function pad(n){return (n<10?"0":"")+n;}' +
     'function cleanSec(r){r=(""+r).trim();if(!/^\\d+$/.test(r))return 0;var n=parseInt(r,10);return n>59?59:n;}' +
@@ -161,12 +167,13 @@ function buildHtml(cur) {
     'if(d===null){return;}sel=parseInt(d,10);mark();});' +
     'document.getElementById("reset").addEventListener("click",function(){' +
     'document.getElementById("step").value=DEF.step;document.getElementById("mm").value=Math.floor(DEF.interval/60);' +
-    'renderSec(DEF.step,DEF.interval%60);sel=DEF.color;mark();});' +
+    'renderSec(DEF.step,DEF.interval%60);sel=DEF.color;mark();' +
+    'document.getElementById("rem").checked=DEF.remember;});' +
     'document.getElementById("save").addEventListener("click",function(){' +
     'var mm=parseInt(document.getElementById("mm").value,10)||0;if(mm<0){mm=0;}if(mm>99){mm=99;}' +
     'var step=parseInt(document.getElementById("step").value,10)||15;' +
     'var ss=readSec(step);' +
-    'var out={interval:mm*60+ss,step:step,color:sel};' +
+    'var out={interval:mm*60+ss,step:step,color:sel,remember:document.getElementById("rem").checked};' +
     /* Phone webview uses pebblejs://close; the emulator passes a return_to
        query param it intercepts -- honour it so config works in both. */
     'var rt=(location.search.match(/[?&]return_to=([^&]+)/)||[])[1];' +
@@ -195,9 +202,12 @@ Pebble.addEventListener('webviewclosed', function (e) {
   var color = parseInt(d.color, 10);
   if (isNaN(color)) { color = DEFAULTS.color; }
 
-  localStorage.setItem('cuv_settings', JSON.stringify({ interval: interval, step: step, color: color }));
+  var remember = (d.remember === true || d.remember === 'true' || d.remember === 1);
 
-  sendSettings({ interval: interval, step: step, color: color });
+  var out = { interval: interval, step: step, color: color, remember: remember };
+  localStorage.setItem('cuv_settings', JSON.stringify(out));
+
+  sendSettings(out);
 });
 
 Pebble.addEventListener('ready', function () {
